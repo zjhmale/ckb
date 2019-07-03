@@ -63,19 +63,18 @@ impl<'a, CS: ChainStore + 'static> CompactBlockProcess<'a, CS> {
         }
 
         {
-            let parent = parent.unwrap();
             let shared_best_header = self.relayer.shared.shared_best_header();
-            let current_total_difficulty =
-                parent.total_difficulty() + compact_block.header.difficulty();
             if shared_best_header
-                .is_better_than(&current_total_difficulty, compact_block.header.hash())
+                .number()
+                .saturating_sub(compact_block.header.number())
+                >= self.relayer.shared.consensus().max_epoch_length()
             {
                 debug_target!(
                     crate::LOG_TARGET_RELAY,
-                    "Received a compact block({:#x}), total difficulty {:#x} <= {:#x}, ignore it",
+                    "Received a compact block: {:#x}, number: {}, best: {}, ignore it",
                     block_hash,
-                    current_total_difficulty,
-                    shared_best_header.total_difficulty(),
+                    compact_block.header.number(),
+                    shared_best_header.number(),
                 );
                 return Ok(());
             }
