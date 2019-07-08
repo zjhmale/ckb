@@ -20,7 +20,7 @@ tempfile = "3.0"
 
 [dependencies.rocksdb]
 git = "https://github.com/zhangsoledad/rust-rocksdb"
-rev = "b94bade8da1e90d08348ca65cfefa255a8a69d9e"
+rev = "b668554"
 
 default-features = false
 features = ["snappy"]
