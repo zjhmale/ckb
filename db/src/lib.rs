@@ -8,10 +8,12 @@ use std::result;
 
 pub mod config;
 pub mod rocksdb;
+mod snapshot;
 mod transaction;
 
 pub use crate::config::DBConfig;
 pub use crate::rocksdb::{DBPinnableSlice, DBVector, RocksDB};
+pub use crate::snapshot::RocksDBSnapshot;
 pub use crate::transaction::{RocksDBTransaction, RocksDBTransactionSnapshot};
 
 pub type Col = &'static str;

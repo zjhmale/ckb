@@ -1,5 +1,6 @@
 use crate::store::ChainStore;
 use crate::transaction::StoreTransaction;
+use crate::snapshot::StoreSnapshot;
 use crate::{StoreConfig, COLUMN_CELL_SET};
 use crate::{COLUMN_BLOCK_BODY, COLUMN_BLOCK_HEADER};
 use ckb_chain_spec::consensus::Consensus;
@@ -119,6 +120,12 @@ impl ChainDB {
     pub fn begin_db_transaction<'a>(&'a self) -> StoreTransaction<'a> {
         StoreTransaction {
             inner: self.db.transaction(),
+        }
+    }
+
+    pub fn get_snapshot<'a>(&'a self) -> StoreSnapshot<'a> {
+        StoreSnapshot {
+            inner: self.db.snapshot(),
         }
     }
 

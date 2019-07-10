@@ -19,8 +19,7 @@ semver = "0.9"
 tempfile = "3.0"
 
 [dependencies.rocksdb]
-git = "https://github.com/zhangsoledad/rust-rocksdb"
-rev = "b668554"
+path = "../../rust-rocksdb"
 
 default-features = false
 features = ["snappy"]

@@ -24,6 +24,8 @@ ckb-verification = { path = "../verification" }
 ckb-script = { path = "../script" }
 ckb-dao = { path = "../util/dao" }
 ckb-reward-calculator = { path = "../util/reward-calculator" }
+tokio = "0.1.22"
+futures = "0.1.28"
 
 [dev-dependencies]
 env_logger = "0.6"

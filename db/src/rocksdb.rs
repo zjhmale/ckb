@@ -1,3 +1,4 @@
+use crate::snapshot::RocksDBSnapshot;
 use crate::transaction::RocksDBTransaction;
 use crate::{Col, DBConfig, Error, Result};
 use ckb_logger::{info, warn};
@@ -154,6 +155,13 @@ impl RocksDB {
         RocksDBTransaction {
             txn: self.inner.transaction(&write_options, &transaction_options),
             db: &self.inner,
+        }
+    }
+
+    pub fn snapshot(&self) -> RocksDBSnapshot {
+        RocksDBSnapshot {
+            db: &self.inner,
+            snapshot: self.inner.snapshot(),
         }
     }
 }
