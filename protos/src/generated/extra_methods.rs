@@ -112,6 +112,12 @@ impl<'a> super::StoredHeader<'a> {
     }
 }
 
+impl<'a> super::StoredTip<'a> {
+    pub fn from_slice(slice: &'a [u8]) -> Self {
+        flatbuffers::get_root::<Self>(&slice)
+    }
+}
+
 impl<'a> super::StoredHeaderCache<'a> {
     pub fn from_slice(slice: &'a [u8]) -> Self {
         flatbuffers::get_root::<Self>(&slice)

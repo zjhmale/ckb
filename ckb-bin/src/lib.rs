@@ -38,8 +38,8 @@ pub fn run_app(version: Version) -> Result<(), ExitCode> {
         (cli::CMD_RUN, _) => subcommand::run(setup.run()?, version),
         (cli::CMD_MINER, _) => subcommand::miner(setup.miner()?),
         (cli::CMD_PROF, Some(matches)) => subcommand::profile(setup.prof(&matches)?),
-        (cli::CMD_EXPORT, Some(matches)) => subcommand::export(setup.export(&matches)?),
-        (cli::CMD_IMPORT, Some(matches)) => subcommand::import(setup.import(&matches)?),
+        // (cli::CMD_EXPORT, Some(matches)) => subcommand::export(setup.export(&matches)?),
+        // (cli::CMD_IMPORT, Some(matches)) => subcommand::import(setup.import(&matches)?),
         (cli::CMD_STATS, Some(matches)) => subcommand::stats(setup.stats(&matches)?),
         _ => unreachable!(),
     }

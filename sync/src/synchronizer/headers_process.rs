@@ -228,13 +228,13 @@ impl<'a> HeadersProcess<'a> {
 
         if log_enabled!(Level::Debug) {
             // Regain the updated best known
-            let chain_state = self.synchronizer.shared.lock_chain_state();
+            let tip = self.synchronizer.shared.store().get_tip().expect("tip");
             let shared_best_known = self.synchronizer.shared.shared_best_header();
             let peer_best_known = self.synchronizer.peers().get_best_known_header(self.peer);
             debug!(
                 "chain: num={}, diff={:#x};",
-                chain_state.tip_number(),
-                chain_state.total_difficulty()
+                tip.header().number(),
+                tip.total_difficulty()
             );
             debug!(
                 "shared best_known_header: num={}, diff={:#x}, hash={:#x};",

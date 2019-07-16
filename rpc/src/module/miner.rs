@@ -80,9 +80,8 @@ impl MinerRpc for MinerRpcImpl {
             self.shared.consensus(),
         );
         let header_verify_ret = {
-            let chain_state = self.shared.lock_chain_state();
             let header_verifier = HeaderVerifier::new(
-                &*chain_state,
+                &self.shared,
                 Arc::clone(&self.shared.consensus().pow_engine()),
             );
             header_verifier.verify(&resolver)

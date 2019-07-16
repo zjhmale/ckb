@@ -5,13 +5,13 @@ mod exit_code;
 mod sentry_config;
 
 pub use app_config::{AppConfig, CKBAppConfig, MinerAppConfig};
-pub use args::{ExportArgs, ImportArgs, InitArgs, MinerArgs, ProfArgs, RunArgs, StatsArgs};
+pub use args::{InitArgs, MinerArgs, ProfArgs, RunArgs, StatsArgs};
 pub use ckb_miner::BlockAssemblerConfig;
 pub use exit_code::ExitCode;
 
 use ckb_build_info::Version;
 use ckb_chain_spec::{consensus::Consensus, ChainSpec};
-use ckb_instrument::Format;
+// use ckb_instrument::Format;
 use ckb_logger::{info_target, LoggerInitGuard};
 use clap::{value_t, ArgMatches, ErrorKind};
 use std::path::PathBuf;
@@ -148,33 +148,33 @@ impl Setup {
         })
     }
 
-    pub fn import<'m>(self, matches: &ArgMatches<'m>) -> Result<ImportArgs, ExitCode> {
-        let consensus = self.consensus()?;
-        let config = self.config.into_ckb()?;
-        let format = value_t!(matches.value_of(cli::ARG_FORMAT), Format)?;
-        let source = value_t!(matches.value_of(cli::ARG_SOURCE), PathBuf)?;
+    // pub fn import<'m>(self, matches: &ArgMatches<'m>) -> Result<ImportArgs, ExitCode> {
+    //     let consensus = self.consensus()?;
+    //     let config = self.config.into_ckb()?;
+    //     let format = value_t!(matches.value_of(cli::ARG_FORMAT), Format)?;
+    //     let source = value_t!(matches.value_of(cli::ARG_SOURCE), PathBuf)?;
 
-        Ok(ImportArgs {
-            config,
-            consensus,
-            format,
-            source,
-        })
-    }
+    //     Ok(ImportArgs {
+    //         config,
+    //         consensus,
+    //         format,
+    //         source,
+    //     })
+    // }
 
-    pub fn export<'m>(self, matches: &ArgMatches<'m>) -> Result<ExportArgs, ExitCode> {
-        let consensus = self.consensus()?;
-        let config = self.config.into_ckb()?;
-        let format = value_t!(matches.value_of(cli::ARG_FORMAT), Format)?;
-        let target = value_t!(matches.value_of(cli::ARG_TARGET), PathBuf)?;
+    // pub fn export<'m>(self, matches: &ArgMatches<'m>) -> Result<ExportArgs, ExitCode> {
+    //     let consensus = self.consensus()?;
+    //     let config = self.config.into_ckb()?;
+    //     let format = value_t!(matches.value_of(cli::ARG_FORMAT), Format)?;
+    //     let target = value_t!(matches.value_of(cli::ARG_TARGET), PathBuf)?;
 
-        Ok(ExportArgs {
-            config,
-            consensus,
-            format,
-            target,
-        })
-    }
+    //     Ok(ExportArgs {
+    //         config,
+    //         consensus,
+    //         format,
+    //         target,
+    //     })
+    // }
 
     pub fn init<'m>(matches: &ArgMatches<'m>) -> Result<InitArgs, ExitCode> {
         if matches.is_present("list-specs") {

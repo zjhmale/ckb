@@ -1,15 +1,16 @@
+use crate::proposal_table::ProposalTable;
 use ckb_core::block::Block;
 use ckb_core::cell::{
     resolve_transaction, BlockCellProvider, OverlayCellProvider, ResolvedTransaction,
 };
 use ckb_core::extras::BlockExt;
 use ckb_core::service::{Request, DEFAULT_CHANNEL_SIZE, SIGNAL_CHANNEL_SIZE};
+use ckb_core::tip::Tip;
 use ckb_core::transaction::ProposalShortId;
 use ckb_core::{BlockNumber, Cycle};
 use ckb_logger::{self, debug, error, info, log_enabled, warn};
 use ckb_notify::NotifyController;
 use ckb_shared::cell_set::CellSetDiff;
-use ckb_shared::chain_state::ChainState;
 use ckb_shared::error::SharedError;
 use ckb_shared::shared::Shared;
 use ckb_stop_handler::{SignalSender, StopHandler};
@@ -89,20 +90,6 @@ impl Fork {
     pub fn verified_len(&self) -> usize {
         self.attached.len() - self.dirty_exts.len()
     }
-
-    pub fn build_cell_set_diff(&self) -> CellSetDiff {
-        let mut cell_set_diff = CellSetDiff::default();
-
-        for b in self.detached() {
-            cell_set_diff.push_old(b);
-        }
-
-        for b in self.attached().iter().take(self.verified_len()) {
-            cell_set_diff.push_new(b);
-        }
-
-        cell_set_diff
-    }
 }
 
 pub(crate) struct GlobalIndex {
@@ -128,12 +115,43 @@ impl GlobalIndex {
 
 pub struct ChainService {
     shared: Shared,
+    proposal_table: ProposalTable,
     notify: NotifyController,
 }
 
 impl ChainService {
     pub fn new(shared: Shared, notify: NotifyController) -> ChainService {
-        ChainService { shared, notify }
+        let proposal_table = Self::init_proposal_table(&shared);
+        ChainService {
+            shared,
+            proposal_table,
+            notify,
+        }
+    }
+
+    pub(crate) fn init_proposal_table(shared: &Shared) -> ProposalTable {
+        let proposal_window = shared.consensus().tx_proposal_window();
+        let store = shared.store();
+        let tip_number = store.get_tip().expect("store inited").header().number();
+        let mut proposal_ids = ProposalTable::new(proposal_window);
+        let proposal_start = tip_number.saturating_sub(proposal_window.farthest());
+        for bn in proposal_start..=tip_number {
+            if let Some(hash) = store.get_block_hash(bn) {
+                let mut ids_set = FnvHashSet::default();
+                if let Some(ids) = store.get_block_proposal_txs_ids(&hash) {
+                    ids_set.extend(ids)
+                }
+
+                if let Some(us) = store.get_block_uncles(&hash) {
+                    for u in us {
+                        ids_set.extend(u.proposals);
+                    }
+                }
+                proposal_ids.insert(bn, ids_set);
+            }
+        }
+        proposal_ids.finalize(tip_number);
+        proposal_ids
     }
 
     pub fn start<S: ToString>(mut self, thread_name: Option<S>) -> ChainController {
@@ -206,7 +224,7 @@ impl ChainService {
         })
     }
 
-    fn insert_block(&self, block: Arc<Block>, need_verify: bool) -> Result<bool, FailureError> {
+    fn insert_block(&mut self, block: Arc<Block>, need_verify: bool) -> Result<bool, FailureError> {
         // insert_block are assumed be executed in single thread
         if self.shared.store().block_exists(block.header().hash()) {
             return Ok(false);
@@ -219,24 +237,22 @@ impl ChainService {
         let mut total_difficulty = U256::zero();
 
         let mut fork = Fork::default();
-        let mut chain_state = self.shared.lock_chain_state();
-        let mut txs_verify_cache = self.shared.lock_txs_verify_cache();
 
-        let parent_ext = self
-            .shared
-            .store()
+        let db_txn = self.shared.store().begin_db_transaction();
+        let txn_snapshot = db_txn.get_snapshot();
+        let tip = db_txn.get_update_for_tip(&txn_snapshot).expect("tip");
+
+        let current_total_difficulty = tip.total_difficulty().to_owned();
+        let parent_ext = txn_snapshot
             .get_block_ext(&block.header().parent_hash())
             .expect("parent already store");
 
-        let parent_header = self
-            .shared
-            .store()
+        let parent_header = txn_snapshot
             .get_block_header(&block.header().parent_hash())
             .expect("parent already store");
 
         let cannon_total_difficulty =
             parent_ext.total_difficulty.to_owned() + block.header().difficulty();
-        let current_total_difficulty = chain_state.total_difficulty().to_owned();
 
         debug!(
             "difficulty current = {:#x}, cannon = {:#x}",
@@ -247,19 +263,17 @@ impl ChainService {
             Err(SharedError::InvalidParentBlock)?;
         }
 
-        let db_txn = self.shared.store().begin_db_transaction();
-        let txn_snapshot = db_txn.get_snapshot();
-        let _snapshot_tip_hash = db_txn.get_update_for_tip_hash(&txn_snapshot);
         db_txn.insert_block(&block)?;
 
-        let parent_header_epoch = self
-            .shared
+        let parent_header_epoch = txn_snapshot
             .get_block_epoch(&parent_header.hash())
             .expect("parent epoch already store");
 
-        let next_epoch_ext = self
-            .shared
-            .next_epoch_ext(&parent_header_epoch, &parent_header);
+        let next_epoch_ext = txn_snapshot.next_epoch_ext(
+            self.shared.consensus(),
+            &parent_header_epoch,
+            &parent_header,
+        );
         let new_epoch = next_epoch_ext.is_some();
 
         let epoch = next_epoch_ext.unwrap_or_else(|| parent_header_epoch.to_owned());
@@ -280,7 +294,7 @@ impl ChainService {
 
         let new_best_block = (cannon_total_difficulty > current_total_difficulty)
             || ((current_total_difficulty == cannon_total_difficulty)
-                && (block.header().hash() < chain_state.tip_hash()));
+                && (block.header().hash() < tip.header().hash()));
 
         if new_best_block {
             debug!(
@@ -289,20 +303,17 @@ impl ChainService {
                 block.header().hash(),
                 &cannon_total_difficulty - &current_total_difficulty
             );
-            self.find_fork(&mut fork, chain_state.tip_number(), &block, ext);
+            self.find_fork(&mut fork, tip.header().number(), &block, ext);
 
             self.rollback(&fork, &db_txn)?;
             // MUST update index before reconcile_main_chain
-            let cell_set_diff = self.reconcile_main_chain(
-                &db_txn,
-                &mut fork,
-                &mut chain_state,
-                &mut txs_verify_cache,
-                need_verify,
-            )?;
-            self.update_proposal_ids(&mut chain_state, &fork);
-            chain_state.update_cell_set(cell_set_diff, &db_txn)?;
-            db_txn.insert_tip_header(&block.header())?;
+            self.reconcile_main_chain(&db_txn, &mut fork, need_verify)?;
+            self.update_proposal_table(&fork);
+            let tip = Tip {
+                header: block.header().clone(),
+                total_difficulty: cannon_total_difficulty.clone(),
+            };
+            db_txn.insert_tip(&tip)?;
             if new_epoch || fork.has_detached() {
                 db_txn.insert_current_epoch_ext(&epoch)?;
             }
@@ -324,24 +335,24 @@ impl ChainService {
             );
             // finalize proposal_id table change
             // then, update tx_pool
-            let detached_proposal_id = chain_state.proposal_ids_finalize(tip_header.number());
+            let detached_proposal_id = self.proposal_ids_finalize(tip_header.number());
             fork.detached_proposal_id = detached_proposal_id;
-            if new_epoch || fork.has_detached() {
-                chain_state.update_current_epoch_ext(epoch);
-            }
-            chain_state.update_tip(tip_header, total_difficulty)?;
-            chain_state.update_tx_pool_for_reorg(
+
+            self.shared.update_tx_pool_for_reorg(
                 fork.detached().iter(),
                 fork.attached().iter(),
                 fork.detached_proposal_id().iter(),
-                &mut txs_verify_cache,
+                block.header().number(),
+                block.header().epoch(),
+                self.shared.snapshot(),
+                &self.proposal_table,
             );
             for detached_block in fork.detached() {
                 self.notify
                     .notify_new_uncle(Arc::new(detached_block.clone()));
             }
             if log_enabled!(ckb_logger::Level::Debug) {
-                self.print_chain(&chain_state, 10);
+                self.print_chain(10);
             }
         } else {
             info!(
@@ -357,12 +368,17 @@ impl ChainService {
         Ok(true)
     }
 
-    pub(crate) fn update_proposal_ids(&self, chain_state: &mut ChainState, fork: &Fork) {
+    pub fn proposal_ids_finalize(&mut self, number: BlockNumber) -> FnvHashSet<ProposalShortId> {
+        self.proposal_table.finalize(number)
+    }
+
+    pub(crate) fn update_proposal_table(&mut self, fork: &Fork) {
         for blk in fork.detached() {
-            chain_state.remove_proposal_ids(&blk);
+            self.proposal_table.remove(blk.header().number());
         }
         for blk in fork.attached() {
-            chain_state.insert_proposal_ids(&blk);
+            self.proposal_table
+                .insert(blk.header().number(), blk.union_proposal_ids());
         }
     }
 
@@ -497,13 +513,10 @@ impl ChainService {
         &self,
         txn: &StoreTransaction,
         fork: &mut Fork,
-        chain_state: &mut ChainState,
-        txs_verify_cache: &mut LruCache<H256, Cycle>,
         need_verify: bool,
-    ) -> Result<CellSetDiff, FailureError> {
+    ) -> Result<(), FailureError> {
+        let mut txs_verify_cache = self.shared.lock_txs_verify_cache();
         let verified_len = fork.verified_len();
-
-        let mut cell_set_diff = fork.build_cell_set_diff();
 
         for b in fork.attached().iter().take(verified_len) {
             txn.attach_block(b)?;
@@ -529,7 +542,6 @@ impl ChainService {
                 if found_error.is_none() {
                     let contextual_block_verifier = ContextualBlockVerifier::new(&verify_context);
                     let mut seen_inputs = FnvHashSet::default();
-                    let cell_set_overlay = chain_state.new_cell_set_overlay(&cell_set_diff, txn);
                     let block_cp = match BlockCellProvider::new(b) {
                         Ok(block_cp) => block_cp,
                         Err(err) => {
@@ -537,7 +549,7 @@ impl ChainService {
                             continue;
                         }
                     };
-                    let cell_provider = OverlayCellProvider::new(&block_cp, &cell_set_overlay);
+                    let cell_provider = OverlayCellProvider::new(&block_cp, &self.shared);
 
                     match b
                         .transactions()
@@ -553,9 +565,12 @@ impl ChainService {
                         .collect::<Result<Vec<ResolvedTransaction>, _>>()
                     {
                         Ok(resolved) => {
-                            match contextual_block_verifier.verify(&resolved, b, txs_verify_cache) {
+                            match contextual_block_verifier.verify(
+                                &resolved,
+                                b,
+                                &mut txs_verify_cache,
+                            ) {
                                 Ok((cycles, txs_fees)) => {
-                                    cell_set_diff.push_new(b);
                                     *verified = Some(true);
                                     l_txs_fees.extend(txs_fees);
                                     txn.attach_block(b)?;
@@ -590,7 +605,6 @@ impl ChainService {
                     *verified = Some(false);
                 }
             } else {
-                cell_set_diff.push_new(b);
                 txn.attach_block(b)?;
                 *verified = Some(true);
             }
@@ -607,15 +621,21 @@ impl ChainService {
             error!("fork {}", serde_json::to_string(&fork).unwrap());
             Err(err)?
         } else {
-            Ok(cell_set_diff)
+            Ok(())
         }
     }
 
     // TODO: beatify
-    fn print_chain(&self, chain_state: &ChainState, len: u64) {
+    fn print_chain(&self, len: u64) {
         debug!("Chain {{");
 
-        let tip = chain_state.tip_number();
+        let tip = self
+            .shared
+            .store()
+            .get_tip()
+            .expect("tip")
+            .header()
+            .number();
         let bottom = tip - cmp::min(tip, len);
 
         for number in (bottom..=tip).rev() {

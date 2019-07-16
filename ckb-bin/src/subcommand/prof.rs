@@ -36,7 +36,8 @@ pub fn profile(args: ProfArgs) -> Result<(), ExitCode> {
         })?;
 
     let from = std::cmp::max(1, args.from);
-    let to = std::cmp::min(shared.lock_chain_state().tip_number(), args.to);
+    let tip = shared.store().get_tip().expect("tip");
+    let to = std::cmp::min(tip.header().number(), args.to);
     let notify = NotifyService::default().start::<&str>(Some("notify"));
     let chain = ChainService::new(tmp_shared, notify);
     let chain_controller = chain.start(Some("chain"));

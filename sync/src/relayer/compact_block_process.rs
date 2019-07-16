@@ -47,6 +47,7 @@ impl<'a> CompactBlockProcess<'a> {
             .relayer
             .shared
             .get_header_view(compact_block.header.parent_hash());
+        let tip = self.relayer.shared.store().get_tip().expect("tip");
         if parent.is_none() {
             debug_target!(
                 crate::LOG_TARGET_RELAY,
@@ -54,21 +55,18 @@ impl<'a> CompactBlockProcess<'a> {
                 block_hash,
                 self.peer
             );
-            self.relayer.shared.send_getheaders_to_peer(
-                self.nc.as_ref(),
-                self.peer,
-                self.relayer.shared.lock_chain_state().tip_header(),
-            );
+            self.relayer
+                .shared
+                .send_getheaders_to_peer(self.nc.as_ref(), self.peer, tip.header());
             return Ok(());
         }
 
         {
             let parent = parent.unwrap();
-            let tip_header = self.relayer.shared.tip_header();
             let tip_header_view = self
                 .relayer
                 .shared
-                .get_header_view(tip_header.hash())
+                .get_header_view(tip.header().hash())
                 .expect("Get tip header view failed");
             let current_total_difficulty =
                 parent.total_difficulty() + compact_block.header.difficulty();
@@ -155,15 +153,9 @@ impl<'a> CompactBlockProcess<'a> {
 
             // Reconstruct block
             let ret = {
-                let chain_state = self.relayer.shared.lock_chain_state();
-                self.relayer.request_proposal_txs(
-                    &chain_state,
-                    self.nc.as_ref(),
-                    self.peer,
-                    &compact_block,
-                );
                 self.relayer
-                    .reconstruct_block(&chain_state, &compact_block, Vec::new())
+                    .request_proposal_txs(self.nc.as_ref(), self.peer, &compact_block);
+                self.relayer.reconstruct_block(&compact_block, Vec::new())
             };
 
             // Accept block

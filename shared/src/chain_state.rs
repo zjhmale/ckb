@@ -31,8 +31,6 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct ChainState {
     store: Arc<ChainDB>,
-    tip_header: Header,
-    total_difficulty: U256,
     pub(crate) cell_set: CellSet,
     proposal_ids: TxProposalTable,
     // interior mutability for immutable borrow proposal_ids
@@ -51,10 +49,11 @@ impl ChainState {
     ) -> Result<Self, SharedError> {
         // check head in store or save the genesis block as head
         let (tip_header, epoch_ext) = {
-            match store
-                .get_tip_header()
-                .and_then(|header| store.get_current_epoch_ext().map(|epoch| (header, epoch)))
-            {
+            match store.get_tip().and_then(|tip| {
+                store
+                    .get_current_epoch_ext()
+                    .map(|epoch| (tip.header, epoch))
+            }) {
                 Some((tip_header, epoch)) => {
                     if let Some(genesis_hash) = store.get_block_hash(0) {
                         let expect_genesis_hash = consensus.genesis_hash();
@@ -113,32 +112,6 @@ impl ChainState {
 
     pub fn store(&self) -> &ChainDB {
         &self.store
-    }
-
-    pub(crate) fn init_proposal_ids(
-        store: &ChainDB,
-        proposal_window: ProposalWindow,
-        tip_number: u64,
-    ) -> TxProposalTable {
-        let mut proposal_ids = TxProposalTable::new(proposal_window);
-        let proposal_start = tip_number.saturating_sub(proposal_window.farthest());
-        for bn in proposal_start..=tip_number {
-            if let Some(hash) = store.get_block_hash(bn) {
-                let mut ids_set = FnvHashSet::default();
-                if let Some(ids) = store.get_block_proposal_txs_ids(&hash) {
-                    ids_set.extend(ids)
-                }
-
-                if let Some(us) = store.get_block_uncles(&hash) {
-                    for u in us {
-                        ids_set.extend(u.proposals);
-                    }
-                }
-                proposal_ids.insert(bn, ids_set);
-            }
-        }
-        proposal_ids.finalize(tip_number);
-        proposal_ids
     }
 
     fn init_cell_set(store: &ChainDB) -> Result<CellSet, FailureError> {
@@ -402,16 +375,6 @@ impl ChainState {
         resolve_transaction(tx, &mut seen_inputs, &pending_and_proposed_provider, self)
     }
 
-    pub fn resolve_tx_from_proposed<'a>(
-        &'a self,
-        tx: &'a Transaction,
-        tx_pool: &'a TxPool,
-    ) -> Result<ResolvedTransaction<'a>, UnresolvableError> {
-        let cell_provider = OverlayCellProvider::new(&tx_pool.proposed, self);
-        let mut seen_inputs = FnvHashSet::default();
-        resolve_transaction(tx, &mut seen_inputs, &cell_provider, self)
-    }
-
     pub(crate) fn verify_rtx(
         &self,
         rtx: &ResolvedTransaction,
@@ -473,80 +436,6 @@ impl ChainState {
     // assume block_number = self.tip_number() + 1 when verify tx in tx_pool
     pub(crate) fn tx_verify_block_number(&self) -> BlockNumber {
         self.tip_number() + 1
-    }
-
-    pub(crate) fn proposed_tx(
-        &self,
-        tx_pool: &mut TxPool,
-        cycles: Option<Cycle>,
-        size: usize,
-        tx: Transaction,
-    ) -> Result<Cycle, PoolError> {
-        let short_id = tx.proposal_short_id();
-        let tx_hash = tx.hash();
-
-        match self.resolve_tx_from_proposed(&tx, tx_pool) {
-            Ok(rtx) => match self.verify_rtx(&rtx, cycles) {
-                Ok(cycles) => {
-                    let fee = DaoCalculator::new(&self.consensus, self.store())
-                        .transaction_fee(&rtx)
-                        .map_err(|e| {
-                            error_target!(
-                                crate::LOG_TARGET_TX_POOL,
-                                "Failed to generate tx fee for {:x}, reason: {:?}",
-                                tx_hash,
-                                e
-                            );
-                            tx_pool.update_statics_for_remove_tx(size, cycles);
-                            PoolError::TxFee
-                        })?;
-                    tx_pool.add_proposed(cycles, fee, size, tx);
-                    Ok(cycles)
-                }
-                Err(e) => {
-                    tx_pool.update_statics_for_remove_tx(size, cycles.unwrap_or(0));
-                    debug_target!(
-                        crate::LOG_TARGET_TX_POOL,
-                        "Failed to add proposed tx {:x}, reason: {:?}",
-                        tx_hash,
-                        e
-                    );
-                    Err(e)
-                }
-            },
-            Err(err) => {
-                match &err {
-                    UnresolvableError::Dead(_) => {
-                        if tx_pool
-                            .conflict
-                            .insert(short_id, DefectEntry::new(tx, 0, cycles, size))
-                            .is_some()
-                        {
-                            tx_pool.update_statics_for_remove_tx(size, cycles.unwrap_or(0));
-                        }
-                    }
-                    UnresolvableError::Unknown(out_points) => {
-                        if tx_pool
-                            .add_orphan(cycles, size, tx, out_points.to_owned())
-                            .is_some()
-                        {
-                            tx_pool.update_statics_for_remove_tx(size, cycles.unwrap_or(0));
-                        }
-                    }
-                    // The remaining errors are Empty, UnspecifiedInputCell and
-                    // InvalidHeader. They all represent invalid transactions
-                    // that should just be discarded.
-                    // OutOfOrder should only appear in BlockCellProvider
-                    UnresolvableError::Empty
-                    | UnresolvableError::UnspecifiedInputCell(_)
-                    | UnresolvableError::InvalidHeader(_)
-                    | UnresolvableError::OutOfOrder(_) => {
-                        tx_pool.update_statics_for_remove_tx(size, cycles.unwrap_or(0));
-                    }
-                }
-                Err(PoolError::UnresolvableTransaction(err))
-            }
-        }
     }
 
     pub(crate) fn proposed_tx_and_descendants(
@@ -755,33 +644,6 @@ impl<'a> CellProvider<'a> for ChainState {
             }
         } else {
             CellStatus::Unspecified
-        }
-    }
-}
-
-impl<'a> HeaderProvider<'a> for ChainState {
-    fn header(&'a self, out_point: &OutPoint) -> HeaderStatus {
-        if let Some(block_hash) = &out_point.block_hash {
-            match self.store.get_block_header(&block_hash) {
-                Some(header) => {
-                    if let Some(cell_out_point) = &out_point.cell {
-                        self.store
-                            .get_transaction_info(&cell_out_point.tx_hash)
-                            .map_or(HeaderStatus::InclusionFaliure, |info| {
-                                if info.block_hash == *block_hash {
-                                    HeaderStatus::live_header(header)
-                                } else {
-                                    HeaderStatus::InclusionFaliure
-                                }
-                            })
-                    } else {
-                        HeaderStatus::live_header(header)
-                    }
-                }
-                None => HeaderStatus::Unknown,
-            }
-        } else {
-            HeaderStatus::Unspecified
         }
     }
 }

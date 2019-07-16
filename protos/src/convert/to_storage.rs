@@ -5,6 +5,7 @@ use ckb_core::{
     block::Block,
     extras::{EpochExt, TransactionInfo},
     header::Header,
+    tip::Tip,
     transaction::{ProposalShortId, Transaction},
     uncle::UncleBlock,
     Capacity,
@@ -213,6 +214,21 @@ impl<'a> CanBuild<'a> for protos::StoredCellMeta<'a> {
         let data = meta.into();
         let mut builder = protos::StoredCellMetaBuilder::new(fbb);
         builder.add_data(&data);
+        builder.finish()
+    }
+}
+
+impl<'a> CanBuild<'a> for protos::StoredTip<'a> {
+    type Input = Tip;
+    fn build<'b: 'a>(
+        fbb: &mut FlatBufferBuilder<'b>,
+        tip: &Self::Input,
+    ) -> WIPOffset<protos::StoredTip<'b>> {
+        let header = protos::StoredHeader::build(fbb, tip.header());
+        let td = tip.total_difficulty().into();
+        let mut builder = protos::StoredTipBuilder::new(fbb);
+        builder.add_header(header);
+        builder.add_total_difficulty(&td);
         builder.finish()
     }
 }

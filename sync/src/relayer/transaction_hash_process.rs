@@ -43,8 +43,8 @@ impl<'a> TransactionHashProcess<'a> {
         } else if self
             .relayer
             .shared
-            .lock_chain_state()
-            .tx_pool()
+            .shared()
+            .try_read_tx_pool()
             .get_tx_with_cycles(&short_id)
             .is_some()
         {

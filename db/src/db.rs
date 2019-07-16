@@ -6,10 +6,12 @@ use rocksdb::ops::{
     Get, GetColumnFamilys, GetPinnedCF, IterateCF, OpenCF, Put, SetOptions, TransactionBegin,
 };
 use rocksdb::{
-    ColumnFamily, Error as RdbError, IteratorMode, OptimisticTransactionDB,
+    ffi, ColumnFamily, Error as RdbError, Handle, IteratorMode, OptimisticTransactionDB,
     OptimisticTransactionOptions, Options, WriteOptions,
 };
-pub use rocksdb::{DBPinnableSlice, DBVector};
+use rocksdb::{DBPinnableSlice, DBVector};
+use std::ptr;
+use std::sync::atomic::AtomicPtr;
 use std::sync::Arc;
 
 // If any data format in database was changed, we have to update this constant manually.
@@ -20,7 +22,7 @@ pub(crate) const VERSION_KEY: &str = "db-version";
 pub(crate) const VERSION_VALUE: &str = "0.1501.0";
 
 pub struct RocksDB {
-    inner: Arc<OptimisticTransactionDB>,
+    pub(crate) inner: Arc<OptimisticTransactionDB>,
 }
 
 impl RocksDB {
@@ -152,29 +154,40 @@ impl RocksDB {
         let mut transaction_options = OptimisticTransactionOptions::new();
         transaction_options.set_snapshot(true);
 
-        RocksDBTransaction {
-            txn: self.inner.transaction(&write_options, &transaction_options),
-            db: &self.inner,
+        unsafe {
+            let inner = ffi::rocksdb_optimistictransaction_begin(
+                self.inner.handle(),
+                write_options.handle(),
+                transaction_options.inner,
+                ptr::null_mut(),
+            );
+            RocksDBTransaction {
+                inner,
+                db: Arc::clone(&self.inner),
+            }
         }
     }
 
-    pub fn snapshot(&self) -> RocksDBSnapshot {
+    pub fn get_snapshot(&self) -> RocksDBSnapshot {
+        let snapshot = unsafe { ffi::rocksdb_create_snapshot(self.inner.base_db_ptr()) };
         RocksDBSnapshot {
-            db: &self.inner,
-            snapshot: self.inner.snapshot(),
+            db: Arc::clone(&self.inner),
+            inner: snapshot,
         }
     }
+
+    // pub fn snapshot_manager(&self) -> RocksDBSnapshotManager {
+    //     let snapshot = unsafe { ffi::rocksdb_create_snapshot(self.inner.base_db_ptr()) } as *mut _;
+    //     RocksDBSnapshotManager {
+    //         db: Arc::clone(&self.inner),
+    //         inner: AtomicPtr::new(snapshot),
+    //     }
+    // }
 }
 
 pub(crate) fn cf_handle(db: &OptimisticTransactionDB, col: Col) -> Result<&ColumnFamily> {
     db.cf_handle(col)
         .ok_or_else(|| Error::DBError(format!("column {} not found", col)))
-}
-
-impl From<RdbError> for Error {
-    fn from(err: RdbError) -> Error {
-        Error::DBError(err.into())
-    }
 }
 
 #[cfg(test)]

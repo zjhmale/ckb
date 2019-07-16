@@ -658,6 +658,101 @@ impl<'a: 'b, 'b> StoredHeaderBuilder<'a, 'b> {
     }
 }
 
+pub enum StoredTipOffset {}
+#[derive(Copy, Clone, Debug, PartialEq)]
+
+pub struct StoredTip<'a> {
+    pub _tab: flatbuffers::Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for StoredTip<'a> {
+    type Inner = StoredTip<'a>;
+    #[inline]
+    fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+        Self {
+            _tab: flatbuffers::Table { buf: buf, loc: loc },
+        }
+    }
+}
+
+impl<'a> StoredTip<'a> {
+    #[inline]
+    pub fn init_from_table(table: flatbuffers::Table<'a>) -> Self {
+        StoredTip { _tab: table }
+    }
+    #[allow(unused_mut)]
+    pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr>(
+        _fbb: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr>,
+        args: &'args StoredTipArgs<'args>,
+    ) -> flatbuffers::WIPOffset<StoredTip<'bldr>> {
+        let mut builder = StoredTipBuilder::new(_fbb);
+        if let Some(x) = args.total_difficulty {
+            builder.add_total_difficulty(x);
+        }
+        if let Some(x) = args.header {
+            builder.add_header(x);
+        }
+        builder.finish()
+    }
+
+    pub const VT_HEADER: flatbuffers::VOffsetT = 4;
+    pub const VT_TOTAL_DIFFICULTY: flatbuffers::VOffsetT = 6;
+
+    #[inline]
+    pub fn header(&self) -> Option<StoredHeader<'a>> {
+        self._tab
+            .get::<flatbuffers::ForwardsUOffset<StoredHeader<'a>>>(StoredTip::VT_HEADER, None)
+    }
+    #[inline]
+    pub fn total_difficulty(&self) -> Option<&'a Bytes32> {
+        self._tab
+            .get::<Bytes32>(StoredTip::VT_TOTAL_DIFFICULTY, None)
+    }
+}
+
+pub struct StoredTipArgs<'a> {
+    pub header: Option<flatbuffers::WIPOffset<StoredHeader<'a>>>,
+    pub total_difficulty: Option<&'a Bytes32>,
+}
+impl<'a> Default for StoredTipArgs<'a> {
+    #[inline]
+    fn default() -> Self {
+        StoredTipArgs {
+            header: None,
+            total_difficulty: None,
+        }
+    }
+}
+pub struct StoredTipBuilder<'a: 'b, 'b> {
+    fbb_: &'b mut flatbuffers::FlatBufferBuilder<'a>,
+    start_: flatbuffers::WIPOffset<flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b> StoredTipBuilder<'a, 'b> {
+    #[inline]
+    pub fn add_header(&mut self, header: flatbuffers::WIPOffset<StoredHeader<'b>>) {
+        self.fbb_
+            .push_slot_always::<flatbuffers::WIPOffset<StoredHeader>>(StoredTip::VT_HEADER, header);
+    }
+    #[inline]
+    pub fn add_total_difficulty(&mut self, total_difficulty: &'b Bytes32) {
+        self.fbb_
+            .push_slot_always::<&Bytes32>(StoredTip::VT_TOTAL_DIFFICULTY, total_difficulty);
+    }
+    #[inline]
+    pub fn new(_fbb: &'b mut flatbuffers::FlatBufferBuilder<'a>) -> StoredTipBuilder<'a, 'b> {
+        let start = _fbb.start_table();
+        StoredTipBuilder {
+            fbb_: _fbb,
+            start_: start,
+        }
+    }
+    #[inline]
+    pub fn finish(self) -> flatbuffers::WIPOffset<StoredTip<'a>> {
+        let o = self.fbb_.end_table(self.start_);
+        flatbuffers::WIPOffset::new(o.value())
+    }
+}
+
 pub enum StoredHeaderCacheOffset {}
 #[derive(Copy, Clone, Debug, PartialEq)]
 

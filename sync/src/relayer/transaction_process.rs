@@ -67,13 +67,11 @@ impl<'a> TransactionProcess<'a> {
             // prepare sync data
             let nc = Arc::clone(&self.nc);
             let self_peer = self.peer;
-            let tx_pool_executor = Arc::clone(&self.relayer.tx_pool_executor);
             let shared = Arc::clone(self.relayer.shared());
             let tx_hash = tx_hash.clone();
             let tx = tx.to_owned();
             Box::new(lazy(move || -> FutureResult<(), ()> {
-                let tx_pool_executor = Arc::clone(&tx_pool_executor);
-                let tx_result = tx_pool_executor.verify_and_add_tx_to_pool(tx.to_owned());
+                let tx_result = shared.shared().add_tx_to_pool(tx.to_owned(), None);
                 // disconnect peer if cycles mismatch
                 match tx_result {
                     Ok(cycles) if cycles == relay_cycles => {

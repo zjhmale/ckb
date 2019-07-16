@@ -15,7 +15,6 @@ use ckb_core::Cycle;
 use ckb_logger::{debug, debug_target};
 use ckb_network::{CKBProtocolContext, PeerIndex};
 use ckb_protocol::SyncMessage;
-use ckb_shared::chain_state::ChainState;
 use ckb_shared::shared::Shared;
 use ckb_store::ChainDB;
 use ckb_store::ChainStore;
@@ -664,14 +663,14 @@ pub struct SyncSharedState {
 impl SyncSharedState {
     pub fn new(shared: Shared) -> SyncSharedState {
         let (total_difficulty, header, total_uncles_count) = {
-            let chain_state = shared.lock_chain_state();
+            let tip = shared.store().get_tip().expect("tip");
             let block_ext = shared
                 .store()
-                .get_block_ext(&chain_state.tip_hash())
+                .get_block_ext(tip.header().hash())
                 .expect("tip block_ext must exist");
             (
-                chain_state.total_difficulty().to_owned(),
-                chain_state.tip_header().to_owned(),
+                tip.total_difficulty().to_owned(),
+                tip.header().to_owned(),
                 block_ext.total_uncles_count,
             )
         };
@@ -749,16 +748,14 @@ impl SyncSharedState {
     pub fn store(&self) -> &ChainDB {
         self.shared.store()
     }
-    pub fn lock_chain_state(&self) -> MutexGuard<ChainState> {
-        self.shared.lock_chain_state()
-    }
     pub fn lock_txs_verify_cache(&self) -> MutexGuard<LruCache<H256, Cycle>> {
         self.shared.lock_txs_verify_cache()
     }
     pub fn tip_header(&self) -> Header {
         self.shared
             .store()
-            .get_tip_header()
+            .get_tip()
+            .map(|tip| tip.header)
             .expect("get_tip_header")
     }
     pub fn consensus(&self) -> &Consensus {

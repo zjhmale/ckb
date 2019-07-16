@@ -34,8 +34,6 @@ use ckb_network::{CKBProtocolContext, CKBProtocolHandler, PeerIndex, TargetSessi
 use ckb_protocol::{
     cast, get_root, short_transaction_id, short_transaction_id_keys, RelayMessage, RelayPayload,
 };
-use ckb_shared::chain_state::ChainState;
-use ckb_tx_pool_executor::TxPoolExecutor;
 use failure::Error as FailureError;
 use faketime::unix_time_as_millis;
 use flatbuffers::FlatBufferBuilder;
@@ -52,7 +50,6 @@ pub const MAX_RELAY_PEERS: usize = 128;
 pub struct Relayer {
     chain: ChainController,
     pub(crate) shared: Arc<SyncSharedState>,
-    pub(crate) tx_pool_executor: Arc<TxPoolExecutor>,
 }
 
 impl Clone for Relayer {
@@ -60,19 +57,13 @@ impl Clone for Relayer {
         Relayer {
             chain: self.chain.clone(),
             shared: Arc::clone(&self.shared),
-            tx_pool_executor: Arc::clone(&self.tx_pool_executor),
         }
     }
 }
 
 impl Relayer {
     pub fn new(chain: ChainController, shared: Arc<SyncSharedState>) -> Self {
-        let tx_pool_executor = Arc::new(TxPoolExecutor::new(shared.shared().clone()));
-        Relayer {
-            chain,
-            shared,
-            tx_pool_executor,
-        }
+        Relayer { chain, shared }
     }
 
     pub fn shared(&self) -> &Arc<SyncSharedState> {
@@ -174,7 +165,6 @@ impl Relayer {
 
     pub fn request_proposal_txs(
         &self,
-        chain_state: &ChainState,
         nc: &CKBProtocolContext,
         peer: PeerIndex,
         block: &CompactBlock,
@@ -183,10 +173,13 @@ impl Relayer {
             .proposals
             .iter()
             .chain(block.uncles.iter().flat_map(UncleBlock::proposals));
-        let fresh_proposals: Vec<ProposalShortId> = proposals
-            .filter(|id| !chain_state.tx_pool().contains_proposal_id(id))
-            .cloned()
-            .collect();
+        let fresh_proposals: Vec<ProposalShortId> = {
+            let tx_pool = self.shared.shared().try_read_tx_pool();
+            proposals
+                .filter(|id| !tx_pool.contains_proposal_id(id))
+                .cloned()
+                .collect()
+        };
         let to_ask_proposals: Vec<ProposalShortId> = self
             .shared()
             .insert_inflight_proposals(fresh_proposals.clone())
@@ -256,7 +249,6 @@ impl Relayer {
 
     pub fn reconstruct_block(
         &self,
-        chain_state: &ChainState,
         compact_block: &CompactBlock,
         transactions: Vec<Transaction>,
     ) -> Result<Block, Vec<usize>> {
@@ -278,7 +270,7 @@ impl Relayer {
             .collect();
 
         if short_ids_set.is_empty() {
-            let tx_pool = chain_state.tx_pool();
+            let tx_pool = self.shared.shared().try_read_tx_pool();
             for entry in tx_pool.proposed_txs_iter() {
                 let short_id = short_transaction_id(key0, key1, &entry.transaction.witness_hash());
                 if short_ids_set.remove(&short_id) {
@@ -339,8 +331,7 @@ impl Relayer {
         let get_block_proposals = self.shared().clear_get_block_proposals();
         let mut peer_txs = FnvHashMap::default();
         {
-            let chain_state = self.shared.lock_chain_state();
-            let tx_pool = chain_state.tx_pool();
+            let tx_pool = self.shared.shared().try_read_tx_pool();
             for (id, peer_indices) in get_block_proposals.into_iter() {
                 if let Some(tx) = tx_pool.get_tx(&id) {
                     for peer_index in peer_indices {

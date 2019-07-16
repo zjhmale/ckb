@@ -24,6 +24,7 @@ use ckb_core::header::Header;
 use ckb_logger::{debug, info, trace};
 use ckb_network::{CKBProtocolContext, CKBProtocolHandler, PeerIndex};
 use ckb_protocol::{cast, get_root, SyncMessage, SyncPayload};
+use ckb_store::ChainStore;
 use failure::Error as FailureError;
 use faketime::unix_time_as_millis;
 use flatbuffers::FlatBufferBuilder;
@@ -227,11 +228,8 @@ impl Synchronizer {
             if state.is_outbound {
                 let best_known_header = state.best_known_header.as_ref();
                 let (tip_header, local_total_difficulty) = {
-                    let chain_state = self.shared.lock_chain_state();
-                    (
-                        chain_state.tip_header().to_owned(),
-                        chain_state.total_difficulty().to_owned(),
-                    )
+                    let tip = self.shared.store().get_tip().expect("tip");
+                    (tip.header().to_owned(), tip.total_difficulty().to_owned())
                 };
                 if best_known_header.map(HeaderView::total_difficulty)
                     >= Some(&local_total_difficulty)
@@ -314,11 +312,8 @@ impl Synchronizer {
 
         let tip = {
             let (header, total_difficulty) = {
-                let chain_state = self.shared.lock_chain_state();
-                (
-                    chain_state.tip_header().to_owned(),
-                    chain_state.total_difficulty().to_owned(),
-                )
+                let tip = self.shared.store().get_tip().expect("tip");
+                (tip.header().to_owned(), tip.total_difficulty().to_owned())
             };
             let best_known = self.shared.shared_best_header();
             if total_difficulty > *best_known.total_difficulty()

@@ -6,10 +6,10 @@ use crate::tx_pool::proposed::ProposedPool;
 use ckb_core::transaction::{OutPoint, ProposalShortId, Transaction};
 use ckb_core::{Capacity, Cycle};
 use ckb_logger::{error_target, trace_target};
+use ckb_store::StoreSnapshot;
 use faketime::unix_time_as_millis;
 use lru_cache::LruCache;
 
-#[derive(Debug, Clone)]
 pub struct TxPool {
     pub(crate) config: TxPoolConfig,
     /// The short id that has not been proposed
@@ -28,10 +28,12 @@ pub struct TxPool {
     pub(crate) total_tx_size: usize,
     // sum of all tx_pool tx's cycles.
     pub(crate) total_tx_cycles: Cycle,
+
+    pub snapshot: StoreSnapshot,
 }
 
 impl TxPool {
-    pub fn new(config: TxPoolConfig) -> TxPool {
+    pub fn new(config: TxPoolConfig, snapshot: StoreSnapshot) -> TxPool {
         let cache_size = config.max_verfify_cache_size;
         let last_txs_updated_at = 0u64;
 
@@ -45,6 +47,7 @@ impl TxPool {
             last_txs_updated_at,
             total_tx_size: 0,
             total_tx_cycles: 0,
+            snapshot,
         }
     }
 
@@ -59,6 +62,9 @@ impl TxPool {
     }
     pub fn orphan_size(&self) -> u32 {
         self.orphan.vertices.len() as u32
+    }
+    pub fn snapshot(&self) -> &StoreSnapshot {
+        &self.snapshot
     }
 
     pub fn total_tx_size(&self) -> usize {
@@ -145,6 +151,10 @@ impl TxPool {
 
     pub(crate) fn touch_last_txs_updated_at(&mut self) {
         self.last_txs_updated_at = unix_time_as_millis();
+    }
+
+    pub fn last_txs_updated_at(&self) -> u64 {
+        self.last_txs_updated_at
     }
 
     pub fn proposed_txs_iter(&self) -> impl Iterator<Item = &ProposedEntry> {
@@ -234,5 +244,9 @@ impl TxPool {
                 self.enqueue_tx(Some(entry.cycles), entry.size, entry.transaction);
             }
         }
+    }
+
+    pub fn reach_limit(&self, tx_size: usize, cycles: Cycle) -> bool {
+        self.reach_size_limit(tx_size) || self.reach_cycles_limit(cycles)
     }
 }

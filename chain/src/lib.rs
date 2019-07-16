@@ -8,6 +8,9 @@
 //!   implement `ChainProvider`
 
 pub mod chain;
+mod proposal_table;
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) const LOG_TARGET_CHAIN: &str = "ckb-chain";

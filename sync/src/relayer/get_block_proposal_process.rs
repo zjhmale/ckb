@@ -39,8 +39,7 @@ impl<'a> GetBlockProposalProcess<'a> {
                 .collect::<Result<_, FailureError>>()?
         };
         let pool_transactions: Vec<Option<Transaction>> = {
-            let chain_state = self.relayer.shared.lock_chain_state();
-            let tx_pool = chain_state.tx_pool();
+            let tx_pool = self.relayer.shared.shared().try_read_tx_pool();
             proposals
                 .iter()
                 .map(|short_id| tx_pool.get_tx(short_id))

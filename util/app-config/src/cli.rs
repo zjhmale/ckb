@@ -4,8 +4,8 @@ use clap::{App, AppSettings, Arg, ArgGroup, ArgMatches, SubCommand};
 
 pub const CMD_RUN: &str = "run";
 pub const CMD_MINER: &str = "miner";
-pub const CMD_EXPORT: &str = "export";
-pub const CMD_IMPORT: &str = "import";
+// pub const CMD_EXPORT: &str = "export";
+// pub const CMD_IMPORT: &str = "import";
 pub const CMD_INIT: &str = "init";
 pub const CMD_PROF: &str = "prof";
 pub const CMD_STATS: &str = "stats";
@@ -52,8 +52,8 @@ fn basic_app<'b>() -> App<'static, 'b> {
         )
         .subcommand(run())
         .subcommand(miner())
-        .subcommand(export())
-        .subcommand(import())
+        // .subcommand(export())
+        // .subcommand(import())
         .subcommand(cli())
         .subcommand(init())
         .subcommand(prof())
@@ -127,35 +127,35 @@ fn arg_format() -> Arg<'static, 'static> {
         .help("Specifies the format.")
 }
 
-fn export() -> App<'static, 'static> {
-    SubCommand::with_name(CMD_EXPORT)
-        .about("Exports ckb data")
-        .arg(arg_format())
-        .arg(
-            Arg::with_name(ARG_TARGET)
-                .short("t")
-                .long(ARG_TARGET)
-                .value_name("path")
-                .required(true)
-                .index(1)
-                .help("Specifies the export target path."),
-        )
-}
+// fn export() -> App<'static, 'static> {
+//     SubCommand::with_name(CMD_EXPORT)
+//         .about("Exports ckb data")
+//         .arg(arg_format())
+//         .arg(
+//             Arg::with_name(ARG_TARGET)
+//                 .short("t")
+//                 .long(ARG_TARGET)
+//                 .value_name("path")
+//                 .required(true)
+//                 .index(1)
+//                 .help("Specifies the export target path."),
+//         )
+// }
 
-fn import() -> App<'static, 'static> {
-    SubCommand::with_name(CMD_IMPORT)
-        .about("Imports ckb data")
-        .arg(arg_format())
-        .arg(
-            Arg::with_name(ARG_SOURCE)
-                .short("s")
-                .long(ARG_SOURCE)
-                .value_name("path")
-                .required(true)
-                .index(1)
-                .help("Specifies the exported data path."),
-        )
-}
+// fn import() -> App<'static, 'static> {
+//     SubCommand::with_name(CMD_IMPORT)
+//         .about("Imports ckb data")
+//         .arg(arg_format())
+//         .arg(
+//             Arg::with_name(ARG_SOURCE)
+//                 .short("s")
+//                 .long(ARG_SOURCE)
+//                 .value_name("path")
+//                 .required(true)
+//                 .index(1)
+//                 .help("Specifies the exported data path."),
+//         )
+// }
 
 fn cli() -> App<'static, 'static> {
     SubCommand::with_name(CMD_CLI)

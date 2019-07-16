@@ -113,9 +113,7 @@ impl ChainRpc for ChainRpcImpl {
         let id = ProposalShortId::from_tx_hash(&hash);
 
         let tx = {
-            let chan_state = self.shared.lock_chain_state();
-
-            let tx_pool = chan_state.tx_pool();
+            let tx_pool = self.shared.try_read_tx_pool();
             tx_pool
                 .get_tx_from_proposed(&id)
                 .map(TransactionWithStatus::with_proposed)
@@ -142,7 +140,8 @@ impl ChainRpc for ChainRpcImpl {
         Ok(self
             .shared
             .store()
-            .get_tip_header()
+            .get_tip()
+            .map(|tip| tip.header)
             .as_ref()
             .map(Into::into)
             .expect("tip header exists"))
@@ -178,7 +177,7 @@ impl ChainRpc for ChainRpcImpl {
         to: BlockNumber,
     ) -> Result<Vec<CellOutputWithOutPoint>> {
         let mut result = Vec::new();
-        let chain_state = self.shared.lock_chain_state();
+        let snapshot = self.shared.snapshot();
         let from = from.0;
         let to = to.0;
         if from > to {
@@ -206,7 +205,7 @@ impl ChainRpc for ChainRpcImpl {
                 .get_block(&block_hash)
                 .ok_or_else(Error::internal_error)?;
             for transaction in block.transactions() {
-                if let Some(transaction_meta) = chain_state.cell_set().get(&transaction.hash()) {
+                if let Some(transaction_meta) = snapshot.get_tx_meta(&transaction.hash()) {
                     for (i, output) in transaction.outputs().iter().enumerate() {
                         if output.lock.hash() == lock_hash
                             && transaction_meta.is_dead(i) == Some(false)
@@ -231,10 +230,7 @@ impl ChainRpc for ChainRpcImpl {
     }
 
     fn get_live_cell(&self, out_point: OutPoint) -> Result<CellWithStatus> {
-        let mut cell_status = self
-            .shared
-            .lock_chain_state()
-            .cell(&out_point.clone().into());
+        let mut cell_status = self.shared.cell(&out_point.clone().into());
         if let CellStatus::Live(ref mut cell_meta) = cell_status {
             if cell_meta.cell_output.is_none() {
                 cell_meta.cell_output = Some(

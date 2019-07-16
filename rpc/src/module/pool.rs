@@ -6,7 +6,6 @@ use ckb_network::NetworkController;
 use ckb_protocol::RelayMessage;
 use ckb_shared::shared::Shared;
 use ckb_sync::NetworkProtocol;
-use ckb_tx_pool_executor::TxPoolExecutor;
 use flatbuffers::FlatBufferBuilder;
 use jsonrpc_core::Result;
 use jsonrpc_derive::rpc;
@@ -27,16 +26,13 @@ pub trait PoolRpc {
 pub(crate) struct PoolRpcImpl {
     network_controller: NetworkController,
     shared: Shared,
-    tx_pool_executor: Arc<TxPoolExecutor>,
 }
 
 impl PoolRpcImpl {
     pub fn new(shared: Shared, network_controller: NetworkController) -> PoolRpcImpl {
-        let tx_pool_executor = Arc::new(TxPoolExecutor::new(shared.clone()));
         PoolRpcImpl {
             shared,
             network_controller,
-            tx_pool_executor,
         }
     }
 }
@@ -45,8 +41,7 @@ impl PoolRpc for PoolRpcImpl {
     fn send_transaction(&self, tx: Transaction) -> Result<H256> {
         let tx: CoreTransaction = tx.into();
 
-        let result = self.tx_pool_executor.verify_and_add_tx_to_pool(tx.clone());
-
+        let result = self.shared.add_tx_to_pool(tx.clone(), None);
         match result {
             Ok(cycles) => {
                 let fbb = &mut FlatBufferBuilder::new();
@@ -66,15 +61,14 @@ impl PoolRpc for PoolRpcImpl {
     }
 
     fn tx_pool_info(&self) -> Result<TxPoolInfo> {
-        let chain_state = self.shared.lock_chain_state();
-        let tx_pool = chain_state.tx_pool();
+        let tx_pool = self.shared.try_read_tx_pool();
         Ok(TxPoolInfo {
             pending: Unsigned(u64::from(tx_pool.pending_size())),
             proposed: Unsigned(u64::from(tx_pool.proposed_size())),
             orphan: Unsigned(u64::from(tx_pool.orphan_size())),
             total_tx_size: Unsigned(tx_pool.total_tx_size() as u64),
             total_tx_cycles: Unsigned(tx_pool.total_tx_cycles()),
-            last_txs_updated_at: Timestamp(chain_state.get_last_txs_updated_at()),
+            last_txs_updated_at: Timestamp(tx_pool.last_txs_updated_at()),
         })
     }
 }

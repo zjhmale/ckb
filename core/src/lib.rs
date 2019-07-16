@@ -10,6 +10,7 @@ pub mod extras;
 pub mod header;
 pub mod script;
 pub mod service;
+pub mod tip;
 pub mod transaction;
 pub mod transaction_meta;
 pub mod uncle;

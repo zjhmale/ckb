@@ -2,21 +2,32 @@ use ckb_chain_spec::consensus::ProposalWindow;
 use ckb_core::header::BlockNumber;
 use ckb_core::transaction::ProposalShortId;
 use ckb_logger::trace_target;
+use ckb_shared::ProposalProvider;
 use ckb_util::FnvHashSet;
 use std::collections::BTreeMap;
 use std::ops::Bound;
 
 #[derive(Debug, PartialEq, Clone, Eq)]
-pub struct TxProposalTable {
+pub struct ProposalTable {
     pub(crate) table: BTreeMap<BlockNumber, FnvHashSet<ProposalShortId>>,
     pub(crate) gap: FnvHashSet<ProposalShortId>,
     pub(crate) set: FnvHashSet<ProposalShortId>,
     pub(crate) proposal_window: ProposalWindow,
 }
 
-impl TxProposalTable {
+impl ProposalProvider for ProposalTable {
+    fn contains(&self, id: &ProposalShortId) -> bool {
+        self.set.contains(id)
+    }
+
+    fn gap(&self, id: &ProposalShortId) -> bool {
+        self.gap.contains(id)
+    }
+}
+
+impl ProposalTable {
     pub fn new(proposal_window: ProposalWindow) -> Self {
-        TxProposalTable {
+        ProposalTable {
             proposal_window,
             gap: FnvHashSet::default(),
             set: FnvHashSet::default(),
@@ -32,14 +43,6 @@ impl TxProposalTable {
 
     pub fn remove(&mut self, number: BlockNumber) -> Option<FnvHashSet<ProposalShortId>> {
         self.table.remove(&number)
-    }
-
-    pub fn contains(&self, id: &ProposalShortId) -> bool {
-        self.set.contains(id)
-    }
-
-    pub fn contains_gap(&self, id: &ProposalShortId) -> bool {
-        self.gap.contains(id)
     }
 
     pub fn get_ids_iter(&self) -> impl Iterator<Item = &ProposalShortId> {
@@ -107,7 +110,7 @@ mod tests {
     fn test_finalize() {
         let id = ProposalShortId::zero();
         let window = ProposalWindow(2, 10);
-        let mut table = TxProposalTable::new(window);
+        let mut table = ProposalTable::new(window);
         let mut ids = FnvHashSet::default();
         ids.insert(id);
         table.insert(1, ids.clone());

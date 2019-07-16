@@ -5,6 +5,7 @@ use numext_fixed_hash::H256;
 use ckb_core::{
     extras::{EpochExt, TransactionInfo},
     header::Header,
+    tip::Tip,
     transaction::{CellOutput, ProposalShortId, Transaction},
     uncle::UncleBlock,
     Capacity,
@@ -140,5 +141,18 @@ impl<'a> TryFrom<protos::StoredCellMeta<'a>> for (Capacity, H256) {
     type Error = Error;
     fn try_from(proto: protos::StoredCellMeta<'a>) -> Result<Self> {
         proto.data().unwrap_some()?.try_into()
+    }
+}
+
+impl<'a> TryFrom<protos::StoredTip<'a>> for Tip {
+    type Error = Error;
+    fn try_from(proto: protos::StoredTip<'a>) -> Result<Self> {
+        let header = proto.header().unwrap_some()?.try_into()?;
+        let total_difficulty = proto.total_difficulty().unwrap_some()?.try_into()?;
+
+        Ok(Tip {
+            header,
+            total_difficulty,
+        })
     }
 }

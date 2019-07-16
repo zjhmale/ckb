@@ -1,6 +1,7 @@
 use ckb_jsonrpc_types::{AlertMessage, ChainInfo, EpochNumber, PeerState, Timestamp};
 use ckb_network_alert::notifier::Notifier as AlertNotifier;
 use ckb_shared::shared::Shared;
+use ckb_store::ChainStore;
 use ckb_sync::Synchronizer;
 use ckb_traits::BlockMedianTimeContext;
 use ckb_util::Mutex;
@@ -27,10 +28,10 @@ impl StatsRpc for StatsRpcImpl {
     fn get_blockchain_info(&self) -> Result<ChainInfo> {
         let chain = self.synchronizer.shared.consensus().id.clone();
         let (tip_header, median_time) = {
-            let chain_state = self.shared.lock_chain_state();
-            let tip_header = chain_state.tip_header().clone();
+            let store = self.shared.store();
+            let tip_header = store.get_tip().expect("tip").header().clone();
             let median_time =
-                (&*chain_state).block_median_time(tip_header.number(), tip_header.hash());
+                (&self.shared).block_median_time(tip_header.number(), tip_header.hash());
             (tip_header, median_time)
         };
         let epoch = tip_header.epoch();

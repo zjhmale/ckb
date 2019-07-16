@@ -7,9 +7,9 @@ use ckb_core::transaction::{
 use ckb_dao::DaoCalculator;
 use ckb_jsonrpc_types::{Capacity, Cycle, DryRunResult, JsonBytes, OutPoint, Script, Transaction};
 use ckb_logger::error;
-use ckb_shared::chain_state::ChainState;
 use ckb_shared::shared::Shared;
 use ckb_store::ChainStore;
+use ckb_traits::ChainProvider;
 use ckb_verification::ScriptVerifier;
 use jsonrpc_core::{Error, Result};
 use jsonrpc_derive::rpc;
@@ -59,14 +59,12 @@ impl ExperimentRpc for ExperimentRpcImpl {
 
     fn dry_run_transaction(&self, tx: Transaction) -> Result<DryRunResult> {
         let tx: CoreTransaction = tx.into();
-        let chain_state = self.shared.lock_chain_state();
-        DryRunner::new(&chain_state).run(tx)
+        DryRunner::new(&self.shared).run(tx)
     }
 
     fn calculate_dao_maximum_withdraw(&self, out_point: OutPoint, hash: H256) -> Result<Capacity> {
-        let chain_state = self.shared.lock_chain_state();
-        let consensus = &chain_state.consensus();
-        let calculator = DaoCalculator::new(consensus, chain_state.store());
+        let consensus = self.shared.consensus();
+        let calculator = DaoCalculator::new(consensus, self.shared.store());
         match calculator.maximum_withdraw(&out_point.into(), &hash) {
             Ok(capacity) => Ok(Capacity(capacity)),
             Err(err) => {
@@ -79,7 +77,7 @@ impl ExperimentRpc for ExperimentRpcImpl {
 
 // DryRunner dry run given transaction, and return the result, including execution cycles.
 pub(crate) struct DryRunner<'a> {
-    chain_state: &'a ChainState,
+    shared: &'a Shared,
 }
 
 impl<'a> CellProvider<'a> for DryRunner<'a> {
@@ -88,8 +86,7 @@ impl<'a> CellProvider<'a> for DryRunner<'a> {
             return CellStatus::Unspecified;
         }
         let co = o.cell.as_ref().expect("checked below");
-        self
-            .chain_state
+        self.shared
             .store()
             .get_cell_meta(&co.tx_hash, co.index)
             .map(CellStatus::live_cell)  // treat as live cell, regardless of live or dead
@@ -103,7 +100,7 @@ impl<'a> HeaderProvider<'a> for DryRunner<'a> {
             return HeaderStatus::Unspecified;
         }
         let block_hash = o.block_hash.as_ref().expect("checked below");
-        self.chain_state
+        self.shared
             .store()
             .get_block_header(&block_hash)
             .map(|header| HeaderStatus::Live(Box::new(header)))
@@ -112,17 +109,17 @@ impl<'a> HeaderProvider<'a> for DryRunner<'a> {
 }
 
 impl<'a> DryRunner<'a> {
-    pub(crate) fn new(chain_state: &'a ChainState) -> Self {
-        Self { chain_state }
+    pub(crate) fn new(shared: &'a Shared) -> Self {
+        Self { shared }
     }
 
     pub(crate) fn run(&self, tx: CoreTransaction) -> Result<DryRunResult> {
         match resolve_transaction(&tx, &mut Default::default(), self, self) {
             Ok(resolved) => {
-                let consensus = self.chain_state.consensus();
+                let consensus = self.shared.consensus();
                 let max_cycles = consensus.max_block_cycles;
-                let script_config = self.chain_state.script_config();
-                let store = self.chain_state.store();
+                let script_config = self.shared.script_config();
+                let store = self.shared.store();
                 match ScriptVerifier::new(&resolved, store, script_config).verify(max_cycles) {
                     Ok(cycles) => Ok(DryRunResult {
                         cycles: Cycle(cycles),

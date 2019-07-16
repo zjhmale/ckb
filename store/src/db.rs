@@ -1,11 +1,12 @@
+use crate::snapshot::StoreSnapshot;
 use crate::store::ChainStore;
 use crate::transaction::StoreTransaction;
-use crate::snapshot::StoreSnapshot;
 use crate::{StoreConfig, COLUMN_CELL_SET};
 use crate::{COLUMN_BLOCK_BODY, COLUMN_BLOCK_HEADER};
 use ckb_chain_spec::consensus::Consensus;
 use ckb_core::extras::BlockExt;
 use ckb_core::header::Header;
+use ckb_core::tip::Tip;
 use ckb_core::transaction::CellOutput;
 use ckb_core::transaction_meta::TransactionMeta;
 use ckb_db::{Col, DBPinnableSlice, Error, RocksDB};
@@ -117,17 +118,21 @@ impl ChainDB {
             })
     }
 
-    pub fn begin_db_transaction<'a>(&'a self) -> StoreTransaction<'a> {
+    pub fn begin_db_transaction(&self) -> StoreTransaction {
         StoreTransaction {
             inner: self.db.transaction(),
         }
     }
 
-    pub fn get_snapshot<'a>(&'a self) -> StoreSnapshot<'a> {
+    pub fn get_snapshot(&self) -> StoreSnapshot {
         StoreSnapshot {
-            inner: self.db.snapshot(),
+            inner: self.db.get_snapshot(),
         }
     }
+
+    // pub fn snapshot_manager(&self) -> RocksDBSnapshotManager {
+    //     self.db.snapshot_manager()
+    // }
 
     pub fn init(&self, consensus: &Consensus) -> Result<(), Error> {
         let genesis = consensus.genesis_block();
@@ -171,7 +176,11 @@ impl ChainDB {
 
         db_txn.insert_block(genesis)?;
         db_txn.insert_block_ext(&genesis_hash, &ext)?;
-        db_txn.insert_tip_header(&genesis.header())?;
+        let tip = Tip {
+            header: genesis.header().clone(),
+            total_difficulty: genesis.header().difficulty().clone(),
+        };
+        db_txn.insert_tip(&tip)?;
         db_txn.insert_current_epoch_ext(epoch)?;
         db_txn
             .insert_block_epoch_index(&genesis_hash, epoch.last_block_hash_in_previous_epoch())?;

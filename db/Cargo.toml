@@ -14,6 +14,7 @@ serde_derive = "1.0"
 failure = "0.1.5"
 ckb-logger = { path = "../util/logger" }
 semver = "0.9"
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.0"

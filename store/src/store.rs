@@ -1,15 +1,19 @@
 use crate::{
     COLUMN_BLOCK_BODY, COLUMN_BLOCK_EPOCH, COLUMN_BLOCK_EXT, COLUMN_BLOCK_HEADER,
-    COLUMN_BLOCK_PROPOSAL_IDS, COLUMN_BLOCK_UNCLE, COLUMN_CELL_META, COLUMN_EPOCH, COLUMN_INDEX,
-    COLUMN_META, COLUMN_TRANSACTION_INFO, COLUMN_UNCLES, META_CURRENT_EPOCH_KEY,
+    COLUMN_BLOCK_PROPOSAL_IDS, COLUMN_BLOCK_UNCLE, COLUMN_CELL_META, COLUMN_CELL_SET, COLUMN_EPOCH,
+    COLUMN_INDEX, COLUMN_META, COLUMN_TRANSACTION_INFO, COLUMN_UNCLES, META_CURRENT_EPOCH_KEY,
     META_TIP_HEADER_KEY,
 };
 use ckb_chain_spec::consensus::Consensus;
 use ckb_core::block::{Block, BlockBuilder};
-use ckb_core::cell::{BlockInfo, CellMeta};
+use ckb_core::cell::{BlockInfo, CellMeta, CellProvider, CellStatus, HeaderProvider, HeaderStatus};
 use ckb_core::extras::{BlockExt, EpochExt, TransactionInfo};
 use ckb_core::header::{BlockNumber, Header};
-use ckb_core::transaction::{CellKey, CellOutPoint, CellOutput, ProposalShortId, Transaction};
+use ckb_core::tip::Tip;
+use ckb_core::transaction::{
+    CellKey, CellOutPoint, CellOutput, OutPoint, ProposalShortId, Transaction,
+};
+use ckb_core::transaction_meta::TransactionMeta;
 use ckb_core::uncle::UncleBlock;
 use ckb_core::EpochNumber;
 use ckb_db::Col;
@@ -79,6 +83,16 @@ pub trait ChainStore<'a> {
             })
     }
 
+    /// Get proposal short id by block number
+    // fn get_proposal_txs_ids(&'a self, number: BlockNumber) -> Option<Vec<ProposalShortId>> {
+    //     self.get(COLUMN_PROPOSALS, &number.to_le_bytes())
+    //         .map(|slice| {
+    //             protos::StoredProposalShortIds::from_slice(&slice.as_ref())
+    //                 .try_into()
+    //                 .expect("deserialize")
+    //         })
+    // }
+
     /// Get block uncles by block header hash
     fn get_block_uncles(&'a self, hash: &H256) -> Option<Vec<UncleBlock>> {
         self.get(COLUMN_BLOCK_UNCLE, hash.as_bytes()).map(|slice| {
@@ -112,13 +126,12 @@ pub trait ChainStore<'a> {
         })
     }
 
-    /// Get the tip(highest) header
-    fn get_tip_header(&'a self) -> Option<Header> {
-        self.get(COLUMN_META, META_TIP_HEADER_KEY)
-            .and_then(|raw| {
-                self.get_block_header(&H256::from_slice(&raw.as_ref()).expect("db safe access"))
-            })
-            .map(Into::into)
+    fn get_tip(&'a self) -> Option<Tip> {
+        self.get(COLUMN_META, META_TIP_HEADER_KEY).map(|slice| {
+            protos::StoredTip::from_slice(&slice.as_ref())
+                .try_into()
+                .expect("deserialize")
+        })
     }
 
     /// Get commit transaction and block hash by it's hash
@@ -141,6 +154,14 @@ pub trait ChainStore<'a> {
                     .try_into()
                     .expect("deserialize")
             })
+    }
+
+    fn get_tx_meta(&'a self, tx_hash: &H256) -> Option<TransactionMeta> {
+        self.get(COLUMN_CELL_SET, tx_hash.as_bytes()).map(|slice| {
+            protos::TransactionMeta::from_slice(&slice.as_ref())
+                .try_into()
+                .expect("deserialize")
+        })
     }
 
     fn get_cell_meta(&'a self, tx_hash: &H256, index: u32) -> Option<CellMeta> {

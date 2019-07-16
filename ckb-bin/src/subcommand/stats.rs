@@ -29,7 +29,8 @@ impl Statics {
 
         let tip = shared
             .store()
-            .get_tip_header()
+            .get_tip()
+            .map(|tip| tip.header)
             .ok_or_else(|| ExitCode::IO)?;
 
         let from = args.from.unwrap_or(0);
