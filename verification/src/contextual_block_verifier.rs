@@ -55,21 +55,21 @@ impl<'a, P: ChainProvider> BlockMedianTimeContext for ForkContext<'a, P> {
 
 pub(crate) struct UncleVerifierContext<'a, P> {
     epoch: &'a EpochExt,
-    excluded: FnvHashSet<&'a H256>,
+    attached: FnvHashSet<&'a H256>,
     detached: FnvHashSet<&'a H256>,
     detached_uncles: FnvHashSet<&'a H256>,
+    block_hash: &'a H256,
     provider: &'a P,
 }
 
 impl<'a, P: ChainProvider> UncleVerifierContext<'a, P> {
     pub(crate) fn new(fork: &'a ForkContext<'a, P>, epoch: &'a EpochExt, block: &'a Block) -> Self {
-        let mut excluded = FnvHashSet::default();
-        excluded.insert(block.header().hash());
+        let mut attached = FnvHashSet::default();
 
         for pre in &fork.attached_blocks {
-            excluded.insert(pre.header().hash());
+            attached.insert(pre.header().hash());
             for uncle in pre.uncles() {
-                excluded.insert(uncle.header.hash());
+                attached.insert(uncle.header.hash());
             }
         }
         let detached = fork
@@ -84,9 +84,10 @@ impl<'a, P: ChainProvider> UncleVerifierContext<'a, P> {
             .collect();
         UncleVerifierContext {
             epoch,
-            excluded,
+            attached,
             detached,
             detached_uncles,
+            block_hash: block.header().hash(),
             provider: &fork.provider,
         }
     }
@@ -94,7 +95,7 @@ impl<'a, P: ChainProvider> UncleVerifierContext<'a, P> {
 
 impl<'a, P: ChainProvider> UncleProvider for UncleVerifierContext<'a, P> {
     fn double_inclusion(&self, hash: &H256) -> bool {
-        if self.excluded.contains(hash) {
+        if self.attached.contains(hash) || (hash == self.block_hash) {
             return true;
         }
 
@@ -105,6 +106,27 @@ impl<'a, P: ChainProvider> UncleProvider for UncleVerifierContext<'a, P> {
 
         if self.provider.store().is_uncle(hash) {
             return !self.detached_uncles.contains(hash);
+        }
+
+        false
+    }
+
+    fn descendant(&self, parent_hash: &H256) -> bool {
+        if self.attached.contains(parent_hash) {
+            return true;
+        }
+
+        if self
+            .provider
+            .store()
+            .get_block_number(parent_hash)
+            .is_some()
+        {
+            return !self.detached.contains(parent_hash);
+        }
+
+        if self.provider.store().is_uncle(parent_hash) {
+            return !self.detached_uncles.contains(parent_hash);
         }
 
         false

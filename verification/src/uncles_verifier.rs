@@ -12,6 +12,8 @@ pub trait UncleProvider {
     fn consensus(&self) -> &Consensus;
 
     fn epoch(&self) -> &EpochExt;
+
+    fn descendant(&self, parent_hash: &H256) -> bool;
 }
 
 #[derive(Clone)]
@@ -20,11 +22,11 @@ pub struct UnclesVerifier<'a, P> {
     block: &'a Block,
 }
 
-/// A block B1 is considered to be the uncle of
-/// another block B2 if all of the following conditions are met:
-/// (1) they are in the same epoch, sharing the same difficulty;
-/// (2) height(B2) > height(B1);
-/// (3) B2 is the first block in its chain to refer to B1
+// A block B1 is considered to be the uncle of another block B2 if all of the following conditions are met:
+// (1) they are in the same epoch, sharing the same difficulty;
+// (2) height(B2) > height(B1);
+// (3) B1's parent is either B2's ancestor or embedded in B2 or its ancestors as an uncle;
+// and (4) B2 is the first block in its chain to refer to B1.
 impl<'a, P> UnclesVerifier<'a, P>
 where
     P: UncleProvider,
@@ -91,6 +93,12 @@ where
 
             if uncle.header().number() >= self.block.header().number() {
                 return Err(Error::Uncles(UnclesError::InvalidNumber));
+            }
+
+            if !(included.contains(uncle.header.parent_hash())
+                || self.provider.descendant(uncle.header.parent_hash()))
+            {
+                return Err(Error::Uncles(UnclesError::DescendantLimit));
             }
 
             let uncle_hash = uncle.header.hash().to_owned();
