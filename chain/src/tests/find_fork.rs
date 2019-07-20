@@ -3,7 +3,6 @@ use crate::tests::util::{MockChain, MockStore};
 use ckb_chain_spec::consensus::Consensus;
 use ckb_core::block::Block;
 use ckb_core::extras::BlockExt;
-use ckb_db::memorydb::MemoryKeyValueDB;
 use ckb_notify::NotifyService;
 use ckb_shared::shared::SharedBuilder;
 use ckb_store::ChainStore;
@@ -20,7 +19,7 @@ use std::sync::Arc;
 //   1--2--3--4
 #[test]
 fn test_find_fork_case1() {
-    let builder = SharedBuilder::<MemoryKeyValueDB>::new();
+    let builder = SharedBuilder::new();
     let shared = builder.consensus(Consensus::default()).build().unwrap();
     let notify = NotifyService::default().start::<&str>(None);
     let mut chain_service = ChainService::new(shared.clone(), notify);

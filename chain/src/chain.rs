@@ -308,7 +308,6 @@ impl ChainService {
             self.rollback(&fork, &db_txn)?;
             // MUST update index before reconcile_main_chain
             self.reconcile_main_chain(&db_txn, &mut fork, need_verify)?;
-            self.update_proposal_table(&fork);
             let tip = Tip {
                 header: block.header().clone(),
                 total_difficulty: cannon_total_difficulty.clone(),
@@ -337,7 +336,7 @@ impl ChainService {
             // then, update tx_pool
             let detached_proposal_id = self.proposal_ids_finalize(tip_header.number());
             fork.detached_proposal_id = detached_proposal_id;
-
+            self.update_proposal_table(&fork);
             self.shared.update_tx_pool_for_reorg(
                 fork.detached().iter(),
                 fork.attached().iter(),
@@ -549,7 +548,7 @@ impl ChainService {
                             continue;
                         }
                     };
-                    let cell_provider = OverlayCellProvider::new(&block_cp, &self.shared);
+                    let cell_provider = OverlayCellProvider::new(&block_cp, txn);
 
                     match b
                         .transactions()
@@ -589,7 +588,12 @@ impl ChainService {
                                     }
                                 }
                                 Err(err) => {
-                                    error!("block {:?} verify error{:?}", b, err);
+                                    error!(
+                                        "block {}-{:x} verify error {:?}",
+                                        b.header().number(),
+                                        b.header().hash(),
+                                        err
+                                    );
                                     found_error =
                                         Some(SharedError::InvalidTransaction(err.to_string()));
                                     *verified = Some(false);
@@ -597,6 +601,12 @@ impl ChainService {
                             }
                         }
                         Err(err) => {
+                            error!(
+                                "block {}-{:x} verify error {:?}",
+                                b.header().number(),
+                                b.header().hash(),
+                                err
+                            );
                             found_error = Some(SharedError::UnresolvableTransaction(err));
                             *verified = Some(false);
                         }
@@ -618,7 +628,7 @@ impl ChainService {
         }
 
         if let Some(err) = found_error {
-            error!("fork {}", serde_json::to_string(&fork).unwrap());
+            // error!("fork {}", serde_json::to_string(&fork).unwrap());
             Err(err)?
         } else {
             Ok(())

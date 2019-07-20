@@ -6,9 +6,11 @@ use crate::{
     META_TIP_HEADER_KEY,
 };
 use ckb_core::block::Block;
+use ckb_core::cell::{CellProvider, CellStatus, HeaderProvider, HeaderStatus};
 use ckb_core::extras::{BlockExt, EpochExt, TransactionInfo};
 use ckb_core::header::Header;
 use ckb_core::tip::Tip;
+use ckb_core::transaction::OutPoint;
 use ckb_core::transaction::{CellKey, CellOutPoint};
 use ckb_core::transaction_meta::TransactionMeta;
 use ckb_db::{Col, DBVector, Error, RocksDBTransaction, RocksDBTransactionSnapshot};
@@ -123,12 +125,6 @@ impl StoreTransaction {
         }
 
         let number = block.header().number().to_le_bytes();
-        // {
-        //     let proposals = block.union_proposal_ids_iter().cloned().collect::<Vec<_>>();
-        //     let builder = protos::StoredProposalShortIds::full_build(&proposals[..]);
-        //     self.insert_raw(COLUMN_PROPOSALS, &number, builder.as_slice())?;
-        // }
-
         self.insert_raw(COLUMN_INDEX, &number, hash.as_bytes())?;
         for uncle in block.uncles() {
             self.insert_raw(COLUMN_UNCLES, &uncle.hash().as_bytes(), &[])?;
@@ -286,5 +282,55 @@ impl StoreTransaction {
 
     pub fn delete_cell_set(&self, tx_hash: &H256) -> Result<(), Error> {
         self.delete(COLUMN_CELL_SET, tx_hash.as_bytes())
+    }
+}
+
+impl<'a> CellProvider<'a> for StoreTransaction {
+    fn cell(&'a self, out_point: &OutPoint) -> CellStatus {
+        if let Some(cell_out_point) = &out_point.cell {
+            match self.get_tx_meta(&cell_out_point.tx_hash) {
+                Some(tx_meta) => match tx_meta.is_dead(cell_out_point.index as usize) {
+                    Some(false) => {
+                        let cell_meta = self
+                            .get_cell_meta(&cell_out_point.tx_hash, cell_out_point.index)
+                            .expect("store should be consistent with cell_set");
+                        CellStatus::live_cell(cell_meta)
+                    }
+                    Some(true) => CellStatus::Dead,
+                    None => CellStatus::Unknown,
+                },
+                None => CellStatus::Unknown,
+            }
+        } else {
+            CellStatus::Unspecified
+        }
+    }
+}
+
+impl<'a> HeaderProvider<'a> for StoreTransaction {
+    fn header(&'a self, out_point: &OutPoint) -> HeaderStatus {
+        if let Some(block_hash) = &out_point.block_hash {
+            match self.get_block_header(&block_hash) {
+                Some(header) => {
+                    if let Some(cell_out_point) = &out_point.cell {
+                        self.get_transaction_info(&cell_out_point.tx_hash).map_or(
+                            HeaderStatus::InclusionFaliure,
+                            |info| {
+                                if info.block_hash == *block_hash {
+                                    HeaderStatus::live_header(header)
+                                } else {
+                                    HeaderStatus::InclusionFaliure
+                                }
+                            },
+                        )
+                    } else {
+                        HeaderStatus::live_header(header)
+                    }
+                }
+                None => HeaderStatus::Unknown,
+            }
+        } else {
+            HeaderStatus::Unspecified
+        }
     }
 }
