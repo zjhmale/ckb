@@ -8,17 +8,18 @@ use ckb_core::transaction::{CellInput, CellOutput, OutPoint, Transaction, Transa
 use ckb_core::{capacity_bytes, Bytes, Capacity};
 use ckb_dao::DaoCalculator;
 use ckb_dao_utils::genesis_dao_data;
-use ckb_db::memorydb::MemoryKeyValueDB;
+use ckb_db::DBConfig;
 use ckb_notify::NotifyService;
 use ckb_shared::shared::Shared;
 use ckb_shared::shared::SharedBuilder;
-use ckb_store::{ChainKVStore, ChainStore};
+use ckb_store::{ChainDB, ChainStore};
 use ckb_test_chain_utils::{build_block, create_always_success_cell};
 use ckb_traits::chain_provider::ChainProvider;
 use fnv::FnvHashSet;
 use numext_fixed_hash::H256;
 use numext_fixed_uint::U256;
 use std::sync::Arc;
+use tempfile::{tempdir, TempDir};
 
 pub use ckb_test_chain_utils::MockStore;
 
@@ -39,14 +40,12 @@ pub(crate) fn create_always_success_out_point() -> OutPoint {
     OutPoint::new_cell(create_always_success_tx().hash().to_owned(), 0)
 }
 
-pub(crate) fn start_chain(
-    consensus: Option<Consensus>,
-) -> (
-    ChainController,
-    Shared<ChainKVStore<MemoryKeyValueDB>>,
-    Header,
-) {
-    let builder = SharedBuilder::<MemoryKeyValueDB>::new();
+pub(crate) fn start_chain(consensus: Option<Consensus>) -> (ChainController, Shared, Header) {
+    let db_dir = tempdir().unwrap();
+    let builder = SharedBuilder::default().db(&DBConfig {
+        path: db_dir.path().to_owned(),
+        options: None,
+    });
 
     let consensus = consensus.unwrap_or_else(|| {
         let tx = create_always_success_tx();
@@ -77,10 +76,15 @@ pub(crate) fn calculate_reward(
     consensus: &Consensus,
     parent: &Header,
 ) -> Capacity {
+    let store: &ChainDB = &store.0;
     let number = parent.number() + 1;
     let target_number = consensus.finalize_target(number).unwrap();
-    let target = store.0.get_ancestor(parent.hash(), target_number).unwrap();
-    let calculator = DaoCalculator::new(consensus, Arc::clone(&store.0));
+    let target = store
+        .get_block_hash(target_number)
+        .and_then(|hash| store.get_block_header(&hash))
+        .unwrap();
+
+    let calculator = DaoCalculator::new(consensus, store);
     calculator
         .primary_block_reward(&target)
         .unwrap()
@@ -345,6 +349,7 @@ pub fn dao_data(
     } else {
         rtxs.unwrap()
     };
-    let calculator = DaoCalculator::new(consensus, Arc::clone(&store.0));
+    let store: &ChainDB = &store.0;
+    let calculator = DaoCalculator::new(consensus, store);
     calculator.dao_field(&rtxs, &parent).unwrap()
 }

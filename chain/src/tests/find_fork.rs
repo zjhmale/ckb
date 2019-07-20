@@ -3,6 +3,7 @@ use crate::tests::util::{MockChain, MockStore};
 use ckb_chain_spec::consensus::Consensus;
 use ckb_core::block::Block;
 use ckb_core::extras::BlockExt;
+use ckb_db::DBConfig;
 use ckb_notify::NotifyService;
 use ckb_shared::shared::SharedBuilder;
 use ckb_store::ChainStore;
@@ -12,6 +13,7 @@ use numext_fixed_uint::U256;
 use std::collections::HashSet;
 use std::iter::FromIterator;
 use std::sync::Arc;
+use tempfile::tempdir;
 
 // 0--1--2--3--4
 // \
@@ -54,7 +56,7 @@ fn test_find_fork_case1() {
             .unwrap();
     }
 
-    let tip_number = { shared.lock_chain_state().tip_number() };
+    let tip_number = { shared.store().get_tip().expect("tip").header().number() };
 
     // fork2 total_difficulty 470
     fork2.gen_empty_block_with_difficulty(200u64, &mut mock_store);
@@ -84,7 +86,12 @@ fn test_find_fork_case1() {
 //      2--3--4
 #[test]
 fn test_find_fork_case2() {
-    let builder = SharedBuilder::<MemoryKeyValueDB>::new();
+    let db_dir = tempdir().unwrap();
+    let builder = SharedBuilder::default().db(&DBConfig {
+        path: db_dir.path().to_owned(),
+        options: None,
+    });
+
     let shared = builder.consensus(Consensus::default()).build().unwrap();
     let notify = NotifyService::default().start::<&str>(None);
     let mut chain_service = ChainService::new(shared.clone(), notify);
@@ -119,7 +126,7 @@ fn test_find_fork_case2() {
             .unwrap();
     }
 
-    let tip_number = { shared.lock_chain_state().tip_number() };
+    let tip_number = { shared.store().get_tip().expect("tip").header().number() };
 
     // fork2 total_difficulty 570
     fork2.gen_empty_block(200u64, &mut mock_store);
@@ -149,7 +156,12 @@ fn test_find_fork_case2() {
 //   1--2--3--4--5--6
 #[test]
 fn test_find_fork_case3() {
-    let builder = SharedBuilder::<MemoryKeyValueDB>::new();
+    let db_dir = tempdir().unwrap();
+    let builder = SharedBuilder::default().db(&DBConfig {
+        path: db_dir.path().to_owned(),
+        options: None,
+    });
+
     let shared = builder.consensus(Consensus::default()).build().unwrap();
     let notify = NotifyService::default().start::<&str>(None);
     let mut chain_service = ChainService::new(shared.clone(), notify);
@@ -185,7 +197,7 @@ fn test_find_fork_case3() {
             .unwrap();
     }
 
-    let tip_number = { shared.lock_chain_state().tip_number() };
+    let tip_number = { shared.store().get_tip().expect("tip").header().number() };
 
     // fork2 total_difficulty 300
     fork2.gen_empty_block_with_difficulty(100u64, &mut mock_store);
@@ -214,7 +226,12 @@ fn test_find_fork_case3() {
 //   1--2--3
 #[test]
 fn test_find_fork_case4() {
-    let builder = SharedBuilder::<MemoryKeyValueDB>::new();
+    let db_dir = tempdir().unwrap();
+    let builder = SharedBuilder::default().db(&DBConfig {
+        path: db_dir.path().to_owned(),
+        options: None,
+    });
+
     let shared = builder.consensus(Consensus::default()).build().unwrap();
     let notify = NotifyService::default().start::<&str>(None);
     let mut chain_service = ChainService::new(shared.clone(), notify);
@@ -250,7 +267,7 @@ fn test_find_fork_case4() {
             .unwrap();
     }
 
-    let tip_number = { shared.lock_chain_state().tip_number() };
+    let tip_number = { shared.store().get_tip().expect("tip").header().number() };
 
     // fork2 total_difficulty 260
     fork2.gen_empty_block_with_difficulty(100u64, &mut mock_store);
