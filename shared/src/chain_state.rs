@@ -241,6 +241,7 @@ impl ChainState {
                                 &cell,
                                 block.header().number(),
                                 block.header().epoch(),
+                                block.header().hash().to_owned(),
                                 cellbase,
                                 tx.outputs().len(),
                             );
@@ -260,11 +261,12 @@ impl ChainState {
 
         let inserted_new_outputs = new_outputs
             .into_iter()
-            .map(|(tx_hash, (number, epoch, cellbase, len))| {
+            .map(|(tx_hash, (number, epoch, hash, cellbase, len))| {
                 let tx_meta = self.cell_set.insert_transaction(
                     tx_hash.to_owned(),
                     number,
                     epoch,
+                    hash,
                     cellbase,
                     len,
                 );
@@ -385,8 +387,9 @@ impl ChainState {
                 ContextualTransactionVerifier::new(
                     &rtx,
                     &self,
-                    self.tx_verify_block_number(),
+                    self.tip_number() + 1,
                     self.current_epoch_ext().number(),
+                    self.tip_hash(),
                     &self.consensus(),
                 )
                 .verify()
@@ -398,8 +401,9 @@ impl ChainState {
                 let cycles = TransactionVerifier::new(
                     &rtx,
                     &self,
-                    self.tx_verify_block_number(),
+                    self.tip_number() + 1,
                     self.current_epoch_ext().number(),
+                    self.tip_hash(),
                     &self.consensus(),
                     &self.script_config,
                     self.store.as_ref(),
@@ -433,9 +437,84 @@ impl ChainState {
         }
     }
 
+<<<<<<< HEAD
     // assume block_number = self.tip_number() + 1 when verify tx in tx_pool
     pub(crate) fn tx_verify_block_number(&self) -> BlockNumber {
         self.tip_number() + 1
+=======
+    pub(crate) fn proposed_tx(
+        &self,
+        tx_pool: &mut TxPool,
+        cycles: Option<Cycle>,
+        size: usize,
+        tx: Transaction,
+    ) -> Result<Cycle, PoolError> {
+        let short_id = tx.proposal_short_id();
+        let tx_hash = tx.hash();
+
+        match self.resolve_tx_from_proposed(&tx, tx_pool) {
+            Ok(rtx) => match self.verify_rtx(&rtx, cycles) {
+                Ok(cycles) => {
+                    let fee = DaoCalculator::new(&self.consensus, Arc::clone(&self.store))
+                        .transaction_fee(&rtx)
+                        .map_err(|e| {
+                            error_target!(
+                                crate::LOG_TARGET_TX_POOL,
+                                "Failed to generate tx fee for {:x}, reason: {:?}",
+                                tx_hash,
+                                e
+                            );
+                            tx_pool.update_statics_for_remove_tx(size, cycles);
+                            PoolError::TxFee
+                        })?;
+                    tx_pool.add_proposed(cycles, fee, size, tx);
+                    Ok(cycles)
+                }
+                Err(e) => {
+                    tx_pool.update_statics_for_remove_tx(size, cycles.unwrap_or(0));
+                    debug_target!(
+                        crate::LOG_TARGET_TX_POOL,
+                        "Failed to add proposed tx {:x}, reason: {:?}",
+                        tx_hash,
+                        e
+                    );
+                    Err(e)
+                }
+            },
+            Err(err) => {
+                match &err {
+                    UnresolvableError::Dead(_) => {
+                        if tx_pool
+                            .conflict
+                            .insert(short_id, DefectEntry::new(tx, 0, cycles, size))
+                            .is_some()
+                        {
+                            tx_pool.update_statics_for_remove_tx(size, cycles.unwrap_or(0));
+                        }
+                    }
+                    UnresolvableError::Unknown(out_points) => {
+                        if tx_pool
+                            .add_orphan(cycles, size, tx, out_points.to_owned())
+                            .is_some()
+                        {
+                            tx_pool.update_statics_for_remove_tx(size, cycles.unwrap_or(0));
+                        }
+                    }
+                    // The remaining errors are Empty, UnspecifiedInputCell and
+                    // InvalidHeader. They all represent invalid transactions
+                    // that should just be discarded.
+                    // OutOfOrder should only appear in BlockCellProvider
+                    UnresolvableError::Empty
+                    | UnresolvableError::UnspecifiedInputCell(_)
+                    | UnresolvableError::InvalidHeader(_)
+                    | UnresolvableError::OutOfOrder(_) => {
+                        tx_pool.update_statics_for_remove_tx(size, cycles.unwrap_or(0));
+                    }
+                }
+                Err(PoolError::UnresolvableTransaction(err))
+            }
+        }
+>>>>>>> develop
     }
 
     pub(crate) fn proposed_tx_and_descendants(
@@ -655,8 +734,29 @@ impl<'a, CS: ChainStore<'a>> CellProvider<'a> for ChainCellSetOverlay<'a, CS> {
                 Some(tx_meta) => match tx_meta.is_dead(cell_out_point.index as usize) {
                     Some(false) => {
                         let cell_meta = self
+<<<<<<< HEAD
                             .store
                             .get_cell_meta(&cell_out_point.tx_hash, cell_out_point.index)
+=======
+                            .outputs
+                            .get(&cell_out_point.tx_hash)
+                            .map(|outputs| {
+                                let output = &outputs[cell_out_point.index as usize];
+                                CellMetaBuilder::from_cell_output(output.to_owned())
+                                    .out_point(cell_out_point.to_owned())
+                                    .block_info(BlockInfo::new(
+                                        tx_meta.block_number(),
+                                        tx_meta.epoch_number(),
+                                        tx_meta.block_hash().to_owned(),
+                                    ))
+                                    .cellbase(tx_meta.is_cellbase())
+                                    .build()
+                            })
+                            .or_else(|| {
+                                self.store
+                                    .get_cell_meta(&cell_out_point.tx_hash, cell_out_point.index)
+                            })
+>>>>>>> develop
                             .expect("store should be consistent with cell_set");
 
                         CellStatus::live_cell(cell_meta)
@@ -677,15 +777,15 @@ impl<'a> BlockMedianTimeContext for &'a ChainState {
         self.consensus.median_time_block_count() as u64
     }
 
-    fn timestamp_and_parent(&self, block_hash: &H256) -> (u64, H256) {
+    fn timestamp_and_parent(&self, block_hash: &H256) -> (u64, BlockNumber, H256) {
         let header = self
             .store
             .get_block_header(&block_hash)
             .expect("[ChainState] blocks used for median time exist");
-        (header.timestamp(), header.parent_hash().to_owned())
-    }
-
-    fn get_block_hash(&self, block_number: BlockNumber) -> Option<H256> {
-        self.store.get_block_hash(block_number)
+        (
+            header.timestamp(),
+            header.number(),
+            header.parent_hash().to_owned(),
+        )
     }
 }

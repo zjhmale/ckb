@@ -1,4 +1,5 @@
-use crate::synchronizer::{BlockStatus, Synchronizer};
+use crate::block_status::BlockStatus;
+use crate::synchronizer::Synchronizer;
 use crate::types::HeaderView;
 use crate::{BLOCK_DOWNLOAD_WINDOW, MAX_BLOCKS_IN_TRANSIT_PER_PEER, PER_FETCH_BLOCK_LIMIT};
 use ckb_core::header::Header;
@@ -33,7 +34,7 @@ impl BlockFetcher {
         let inflight = self.synchronizer.shared().read_inflight_blocks();
 
         // Can't download any more from this peer
-        inflight.peer_inflight_count(&self.peer) >= MAX_BLOCKS_IN_TRANSIT_PER_PEER
+        inflight.peer_inflight_count(self.peer) >= MAX_BLOCKS_IN_TRANSIT_PER_PEER
     }
 
     pub fn is_better_chain(&self, header: &HeaderView) -> bool {
@@ -137,7 +138,7 @@ impl BlockFetcher {
         {
             let mut inflight = self.synchronizer.shared().write_inflight_blocks();
             let count = MAX_BLOCKS_IN_TRANSIT_PER_PEER
-                .saturating_sub(inflight.peer_inflight_count(&self.peer));
+                .saturating_sub(inflight.peer_inflight_count(self.peer));
             let max_height_header = self
                 .synchronizer
                 .shared
@@ -150,10 +151,10 @@ impl BlockFetcher {
                     .shared
                     .get_ancestor(max_height_header.hash(), index_height)?;
                 let to_fetch_hash = to_fetch.hash();
-
-                let block_status = self.synchronizer.shared().get_block_status(to_fetch_hash);
-                if block_status != BlockStatus::VALID_MASK
-                    || self.synchronizer.shared().contains_orphan_block(&to_fetch)
+                if self
+                    .synchronizer
+                    .shared()
+                    .contains_block_status(to_fetch_hash, BlockStatus::BLOCK_RECEIVED)
                 {
                     continue;
                 }

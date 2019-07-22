@@ -8,7 +8,7 @@ use ckb_core::service::{Request, DEFAULT_CHANNEL_SIZE, SIGNAL_CHANNEL_SIZE};
 use ckb_core::tip::Tip;
 use ckb_core::transaction::ProposalShortId;
 use ckb_core::{BlockNumber, Cycle};
-use ckb_logger::{self, debug, error, info, log_enabled, warn};
+use ckb_logger::{self, debug, error, info, log_enabled, trace, warn};
 use ckb_notify::NotifyController;
 use ckb_shared::cell_set::CellSetDiff;
 use ckb_shared::error::SharedError;
@@ -341,8 +341,7 @@ impl ChainService {
                 fork.detached().iter(),
                 fork.attached().iter(),
                 fork.detached_proposal_id().iter(),
-                block.header().number(),
-                block.header().epoch(),
+                block.header(),
                 self.shared.snapshot(),
                 &self.proposal_table,
             );

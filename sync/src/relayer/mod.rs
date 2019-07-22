@@ -16,12 +16,13 @@ use self::block_proposal_process::BlockProposalProcess;
 use self::block_transactions_process::BlockTransactionsProcess;
 use self::compact_block::CompactBlock;
 use self::compact_block_process::CompactBlockProcess;
-pub use self::error::Error;
+pub use self::error::{Error, Misbehavior};
 use self::get_block_proposal_process::GetBlockProposalProcess;
 use self::get_block_transactions_process::GetBlockTransactionsProcess;
 use self::get_transaction_process::GetTransactionProcess;
 use self::transaction_hash_process::TransactionHashProcess;
 use self::transaction_process::TransactionProcess;
+use crate::block_status::BlockStatus;
 use crate::relayer::compact_block::ShortTransactionID;
 use crate::types::SyncSharedState;
 use crate::BAD_MESSAGE_BAN_TIME;
@@ -31,6 +32,7 @@ use ckb_core::transaction::{ProposalShortId, Transaction};
 use ckb_core::uncle::UncleBlock;
 use ckb_logger::{debug_target, info_target, trace_target};
 use ckb_network::{CKBProtocolContext, CKBProtocolHandler, PeerIndex, TargetSession};
+use ckb_protocol::error::Error as ProtocalError;
 use ckb_protocol::{
     cast, get_root, short_transaction_id, short_transaction_id_keys, RelayMessage, RelayPayload,
 };
@@ -158,8 +160,19 @@ impl Relayer {
         message: RelayMessage,
     ) {
         if let Err(err) = self.try_process(Arc::clone(&nc), peer, message) {
-            debug_target!(crate::LOG_TARGET_RELAY, "try_process error {}", err);
-            nc.ban_peer(peer, BAD_MESSAGE_BAN_TIME);
+            if let Some(&Error::Misbehavior(ref e)) = err.downcast_ref() {
+                debug_target!(crate::LOG_TARGET_RELAY, "try_process error {}", e);
+                nc.ban_peer(peer, BAD_MESSAGE_BAN_TIME);
+                return;
+            }
+            if let Some(&ProtocalError::Malformed) = err.downcast_ref() {
+                debug_target!(
+                    crate::LOG_TARGET_RELAY,
+                    "try_process error {}",
+                    ProtocalError::Malformed
+                );
+                nc.ban_peer(peer, BAD_MESSAGE_BAN_TIME);
+            }
         }
     }
 
@@ -208,6 +221,13 @@ impl Relayer {
     }
 
     pub fn accept_block(&self, nc: &CKBProtocolContext, peer: PeerIndex, block: Block) {
+        if self
+            .shared()
+            .contains_block_status(block.header().hash(), BlockStatus::BLOCK_STORED)
+        {
+            return;
+        }
+
         let boxed = Arc::new(block);
         if self
             .shared()
@@ -227,13 +247,10 @@ impl Relayer {
             fbb.finish(message, None);
             let data = fbb.finished_data().into();
 
-            let mut known_blocks = self.shared().known_blocks();
             let selected_peers: Vec<PeerIndex> = nc
                 .connected_peers()
                 .into_iter()
-                .filter(|target_peer| {
-                    known_blocks.insert(*target_peer, block_hash.clone()) && (peer != *target_peer)
-                })
+                .filter(|target_peer| peer != *target_peer)
                 .take(MAX_RELAY_PEERS)
                 .collect();
             if let Err(err) = nc.quick_filter_broadcast(TargetSession::Multi(selected_peers), data)
@@ -269,7 +286,7 @@ impl Relayer {
             })
             .collect();
 
-        if short_ids_set.is_empty() {
+        if !short_ids_set.is_empty() {
             let tx_pool = self.shared.shared().try_read_tx_pool();
             for entry in tx_pool.proposed_txs_iter() {
                 let short_id = short_transaction_id(key0, key1, &entry.transaction.witness_hash());

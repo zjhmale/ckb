@@ -89,16 +89,16 @@ impl<'a> BlockMedianTimeContext for &'a Shared {
         self.consensus.median_time_block_count() as u64
     }
 
-    fn timestamp_and_parent(&self, block_hash: &H256) -> (u64, H256) {
+    fn timestamp_and_parent(&self, block_hash: &H256) -> (u64, BlockNumber, H256) {
         let header = self
             .store
             .get_block_header(&block_hash)
             .expect("[ChainState] blocks used for median time exist");
-        (header.timestamp(), header.parent_hash().to_owned())
-    }
-
-    fn get_block_hash(&self, block_number: BlockNumber) -> Option<H256> {
-        self.store.get_block_hash(block_number)
+        (
+            header.timestamp(),
+            header.number(),
+            header.parent_hash().to_owned(),
+        )
     }
 }
 
@@ -112,31 +112,32 @@ impl Shared {
 
     pub fn add_txs_to_pool(&self, txs: Vec<Transaction>) -> Result<Vec<Cycle>, PoolError> {
         let mut tx_pool = self.tx_pool.write();
-        let (tip_number, epoch_number) = {
+        let (tip_header, epoch_number) = {
             let snapshot = tx_pool.snapshot();
-            let tip_number = snapshot.get_tip().expect("tip").header().number();
+            let tip_header = snapshot.get_tip().expect("tip").header().clone();
             let epoch_number = snapshot
                 .get_current_epoch_ext()
                 .expect("current_epoch")
                 .number();
-            (tip_number, epoch_number)
+            (tip_header, epoch_number)
         };
         txs.into_iter()
             .map(|tx| {
                 let short_id = tx.proposal_short_id();
                 let tx_size = tx.serialized_size();
                 match self.resolve_tx_from_pending_and_proposed(&tx_pool, &tx) {
-                    Ok(rtx) => self
-                        .verify_rtx(&tx_pool, &rtx, None, tip_number + 1, epoch_number)
-                        .and_then(|cycles| {
-                            if tx_pool.reach_limit(tx_size, cycles) {
-                                return Err(PoolError::LimitReached);
-                            }
-                            if tx_pool.enqueue_tx(Some(cycles), tx_size, tx) {
-                                tx_pool.update_statics_for_add_tx(tx_size, cycles);
-                            }
-                            Ok(cycles)
-                        }),
+                    Ok(rtx) => {
+                        self.verify_rtx(&tx_pool, &rtx, None, &tip_header)
+                            .and_then(|cycles| {
+                                if tx_pool.reach_limit(tx_size, cycles) {
+                                    return Err(PoolError::LimitReached);
+                                }
+                                if tx_pool.enqueue_tx(Some(cycles), tx_size, tx) {
+                                    tx_pool.update_statics_for_add_tx(tx_size, cycles);
+                                }
+                                Ok(cycles)
+                            })
+                    }
                     Err(err) => Err(PoolError::UnresolvableTransaction(err)),
                 }
             })
@@ -153,18 +154,18 @@ impl Shared {
         let tx_size = tx.serialized_size();
 
         let mut tx_pool = self.tx_pool.write();
-        let (tip_number, epoch_number) = {
+        let (tip_header, epoch_number) = {
             let snapshot = tx_pool.snapshot();
-            let tip_number = snapshot.get_tip().expect("tip").header().number();
+            let tip_header = snapshot.get_tip().expect("tip").header().clone();
             let epoch_number = snapshot
                 .get_current_epoch_ext()
                 .expect("current_epoch")
                 .number();
-            (tip_number, epoch_number)
+            (tip_header, epoch_number)
         };
         match self.resolve_tx_from_pending_and_proposed(&tx_pool, &tx) {
             Ok(rtx) => self
-                .verify_rtx(&tx_pool, &rtx, cycles, tip_number + 1, epoch_number)
+                .verify_rtx(&tx_pool, &rtx, cycles, &tip_header)
                 .and_then(|cycles| {
                     if tx_pool.reach_limit(tx_size, cycles) {
                         return Err(PoolError::LimitReached);
@@ -211,16 +212,18 @@ impl Shared {
         tx_pool: &TxPool,
         rtx: &ResolvedTransaction,
         cycles: Option<Cycle>,
-        verify_block_number: BlockNumber,
-        epoch_number: EpochNumber,
+        tip_header: &Header,
     ) -> Result<Cycle, PoolError> {
+        let epoch_number = tip_header.epoch();
+
         match cycles {
             Some(cycles) => {
                 ContextualTransactionVerifier::new(
                     &rtx,
                     &self,
-                    verify_block_number,
+                    tip_header.number() + 1,
                     epoch_number,
+                    tip_header.hash(),
                     &self.consensus,
                 )
                 .verify()
@@ -232,8 +235,9 @@ impl Shared {
                 let cycles = TransactionVerifier::new(
                     &rtx,
                     &self,
-                    verify_block_number,
+                    tip_header.number() + 1,
                     epoch_number,
+                    tip_header.hash(),
                     &self.consensus,
                     &self.script_config,
                     &tx_pool.snapshot,
@@ -251,8 +255,7 @@ impl Shared {
         tx_pool: &mut TxPool,
         tx: &Transaction,
         proposal_provider: &P,
-        tip_number: BlockNumber,
-        epoch_number: EpochNumber,
+        tip_header: &Header,
     ) {
         let entries = tx_pool.orphan.remove_by_ancestor(tx);
         for entry in entries {
@@ -263,8 +266,7 @@ impl Shared {
                     entry.cycles,
                     entry.size,
                     entry.transaction,
-                    tip_number,
-                    epoch_number,
+                    tip_header,
                 );
                 if ret.is_err() {
                     tx_pool.update_statics_for_remove_tx(entry.size, entry.cycles.unwrap_or(0));
@@ -287,44 +289,40 @@ impl Shared {
         cycles: Option<Cycle>,
         size: usize,
         tx: Transaction,
-        tip_number: BlockNumber,
-        epoch_number: EpochNumber,
+        tip_header: &Header,
     ) -> Result<Cycle, PoolError> {
         let short_id = tx.proposal_short_id();
         let tx_hash = tx.hash();
-        let verify_block_number = tip_number + 1;
 
         match self.resolve_tx_from_proposed(tx_pool, &tx) {
-            Ok(rtx) => {
-                match self.verify_rtx(tx_pool, &rtx, cycles, verify_block_number, epoch_number) {
-                    Ok(cycles) => {
-                        let fee = DaoCalculator::new(&self.consensus, &tx_pool.snapshot)
-                            .transaction_fee(&rtx)
-                            .map_err(|e| {
-                                error_target!(
-                                    crate::LOG_TARGET_TX_POOL,
-                                    "Failed to generate tx fee for {:x}, reason: {:?}",
-                                    tx_hash,
-                                    e
-                                );
-                                tx_pool.update_statics_for_remove_tx(size, cycles);
-                                PoolError::TxFee
-                            })?;
-                        tx_pool.add_proposed(cycles, fee, size, tx);
-                        Ok(cycles)
-                    }
-                    Err(e) => {
-                        tx_pool.update_statics_for_remove_tx(size, cycles.unwrap_or(0));
-                        debug_target!(
-                            crate::LOG_TARGET_TX_POOL,
-                            "Failed to add proposed tx {:x}, reason: {:?}",
-                            tx_hash,
-                            e
-                        );
-                        Err(e)
-                    }
+            Ok(rtx) => match self.verify_rtx(tx_pool, &rtx, cycles, tip_header) {
+                Ok(cycles) => {
+                    let fee = DaoCalculator::new(&self.consensus, &tx_pool.snapshot)
+                        .transaction_fee(&rtx)
+                        .map_err(|e| {
+                            error_target!(
+                                crate::LOG_TARGET_TX_POOL,
+                                "Failed to generate tx fee for {:x}, reason: {:?}",
+                                tx_hash,
+                                e
+                            );
+                            tx_pool.update_statics_for_remove_tx(size, cycles);
+                            PoolError::TxFee
+                        })?;
+                    tx_pool.add_proposed(cycles, fee, size, tx);
+                    Ok(cycles)
                 }
-            }
+                Err(e) => {
+                    tx_pool.update_statics_for_remove_tx(size, cycles.unwrap_or(0));
+                    debug_target!(
+                        crate::LOG_TARGET_TX_POOL,
+                        "Failed to add proposed tx {:x}, reason: {:?}",
+                        tx_hash,
+                        e
+                    );
+                    Err(e)
+                }
+            },
             Err(err) => {
                 match &err {
                     UnresolvableError::Dead(_) => {
@@ -367,18 +365,11 @@ impl Shared {
         size: usize,
         tx: Transaction,
         proposal_provider: &P,
-        tip_number: BlockNumber,
-        epoch_number: EpochNumber,
+        tip_header: &Header,
     ) -> Result<Cycle, PoolError> {
-        self.proposed_tx(tx_pool, cycles, size, tx.clone(), tip_number, epoch_number)
+        self.proposed_tx(tx_pool, cycles, size, tx.clone(), tip_header)
             .map(|cycles| {
-                self.try_proposed_orphan_by_ancestor(
-                    tx_pool,
-                    &tx,
-                    proposal_provider,
-                    tip_number,
-                    epoch_number,
-                );
+                self.try_proposed_orphan_by_ancestor(tx_pool, &tx, proposal_provider, tip_header);
                 cycles
             })
     }
@@ -388,8 +379,7 @@ impl Shared {
         detached_blocks: impl Iterator<Item = &'a Block>,
         attached_blocks: impl Iterator<Item = &'a Block>,
         detached_proposal_id: impl Iterator<Item = &'a ProposalShortId>,
-        tip_number: BlockNumber,
-        epoch_number: EpochNumber,
+        tip_header: &Header,
         snapshot: StoreSnapshot,
         proposal_provider: &P,
     ) {
@@ -425,8 +415,7 @@ impl Shared {
                     tx_size,
                     tx,
                     proposal_provider,
-                    tip_number,
-                    epoch_number,
+                    tip_header,
                 ) {
                     if cached_cycles.is_none() {
                         txs_verify_cache.insert(tx_hash, cycles);
@@ -443,13 +432,7 @@ impl Shared {
         }
 
         for tx in &attached {
-            self.try_proposed_orphan_by_ancestor(
-                &mut tx_pool,
-                tx,
-                proposal_provider,
-                tip_number,
-                epoch_number,
-            );
+            self.try_proposed_orphan_by_ancestor(&mut tx_pool, tx, proposal_provider, tip_header);
         }
 
         let mut entries = Vec::new();
@@ -494,8 +477,7 @@ impl Shared {
                 size,
                 tx,
                 proposal_provider,
-                tip_number,
-                epoch_number,
+                tip_header,
             ) {
                 debug_target!(
                     crate::LOG_TARGET_TX_POOL,

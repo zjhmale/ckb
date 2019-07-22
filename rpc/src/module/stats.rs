@@ -30,8 +30,7 @@ impl StatsRpc for StatsRpcImpl {
         let (tip_header, median_time) = {
             let store = self.shared.store();
             let tip_header = store.get_tip().expect("tip").header().clone();
-            let median_time =
-                (&self.shared).block_median_time(tip_header.number(), tip_header.hash());
+            let median_time = (&self.shared).block_median_time(tip_header.hash());
             (tip_header, median_time)
         };
         let epoch = tip_header.epoch();

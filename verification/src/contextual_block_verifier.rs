@@ -64,16 +64,16 @@ impl<'a, CS: ChainStore<'a>> BlockMedianTimeContext for VerifyContext<'a, CS> {
         self.consensus.median_time_block_count() as u64
     }
 
-    fn timestamp_and_parent(&self, block_hash: &H256) -> (u64, H256) {
+    fn timestamp_and_parent(&self, block_hash: &H256) -> (u64, BlockNumber, H256) {
         let header = self
             .store
             .get_block_header(block_hash)
             .expect("[ForkContext] blocks used for median time exist");
-        (header.timestamp(), header.parent_hash().to_owned())
-    }
-
-    fn get_block_hash(&self, block_number: BlockNumber) -> Option<H256> {
-        self.store.get_block_hash(block_number)
+        (
+            header.timestamp(),
+            header.number(),
+            header.parent_hash().to_owned(),
+        )
     }
 }
 
@@ -292,6 +292,7 @@ struct BlockTxsVerifier<'a, CS> {
     context: &'a VerifyContext<'a, CS>,
     block_number: BlockNumber,
     epoch_number: EpochNumber,
+    parent_hash: &'a H256,
     resolved: &'a [ResolvedTransaction<'a>],
 }
 
@@ -301,12 +302,14 @@ impl<'a, CS: ChainStore<'a>> BlockTxsVerifier<'a, CS> {
         context: &'a VerifyContext<'a, CS>,
         block_number: BlockNumber,
         epoch_number: EpochNumber,
+        parent_hash: &'a H256,
         resolved: &'a [ResolvedTransaction<'a>],
     ) -> Self {
         BlockTxsVerifier {
             context,
             block_number,
             epoch_number,
+            parent_hash,
             resolved,
         }
     }
@@ -325,6 +328,7 @@ impl<'a, CS: ChainStore<'a>> BlockTxsVerifier<'a, CS> {
                         self.context,
                         self.block_number,
                         self.epoch_number,
+                        self.parent_hash,
                         self.context.consensus,
                     )
                     .verify()
@@ -336,6 +340,7 @@ impl<'a, CS: ChainStore<'a>> BlockTxsVerifier<'a, CS> {
                         self.context,
                         self.block_number,
                         self.epoch_number,
+                        self.parent_hash,
                         self.context.consensus,
                         self.context.script_config,
                         self.context.store,
@@ -413,6 +418,7 @@ impl<'a, CS: ChainStore<'a>> ContextualBlockVerifier<'a, CS> {
             &self.context,
             block.header().number(),
             block.header().epoch(),
+            block.header().parent_hash(),
             resolved,
         )
         .verify(txs_verify_cache)?;

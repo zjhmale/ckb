@@ -15,12 +15,14 @@ use ckb_db::DBConfig;
 use ckb_db::MemoryKeyValueDB;
 use ckb_indexer::{DefaultIndexerStore, IndexerStore};
 use ckb_network::{NetworkConfig, NetworkService, NetworkState};
-use ckb_network_alert::{alert_relayer::AlertRelayer, config::Config as AlertConfig};
+use ckb_network_alert::{
+    alert_relayer::AlertRelayer, config::SignatureConfig as AlertSignatureConfig,
+};
 use ckb_notify::NotifyService;
 use ckb_shared::shared::{Shared, SharedBuilder};
 use ckb_store::ChainKVStore;
 use ckb_sync::{SyncSharedState, Synchronizer};
-use ckb_test_chain_utils::create_always_success_cell;
+use ckb_test_chain_utils::always_success_cell;
 use ckb_traits::chain_provider::ChainProvider;
 use jsonrpc_core::IoHandler;
 use jsonrpc_http_server::ServerBuilder;
@@ -70,7 +72,7 @@ fn setup_node(
     ChainController,
     RpcServer,
 ) {
-    let (always_success_cell, always_success_script) = create_always_success_cell();
+    let (always_success_cell, always_success_script) = always_success_cell();
     let always_success_tx = TransactionBuilder::default()
         .witness(always_success_script.clone().into_witness())
         .input(CellInput::new(OutPoint::null(), 0))
@@ -137,17 +139,16 @@ fn setup_node(
     }
 
     // Start network services
-    let dir = tempfile::Builder::new()
-        .prefix("ckb_resource_test")
-        .tempdir()
-        .unwrap();
+    let dir = tempfile::tempdir()
+        .expect("create tempdir failed")
+        .path()
+        .to_path_buf();
     let mut network_config = NetworkConfig::default();
-    network_config.path = dir.path().to_path_buf();
+    network_config.path = dir.clone();
     network_config.ping_interval_secs = 1;
     network_config.ping_timeout_secs = 1;
     network_config.connect_outbound_interval_secs = 1;
 
-    File::create(dir.path().join("network")).expect("create network database");
     let network_state =
         Arc::new(NetworkState::from_config(network_config).expect("Init network state failed"));
     let network_controller = NetworkService::new(
@@ -161,7 +162,7 @@ fn setup_node(
     let synchronizer = Synchronizer::new(chain_controller.clone(), Arc::clone(&sync_shared_state));
 
     let db_config = DBConfig {
-        path: dir.path().join("indexer").to_path_buf(),
+        path: dir.join("indexer"),
         ..Default::default()
     };
     let indexer_store = DefaultIndexerStore::new(&db_config, shared.clone());
@@ -184,7 +185,11 @@ fn setup_node(
         }
         .to_delegate(),
     );
-    let alert_relayer = AlertRelayer::new("0.1.0".to_string(), AlertConfig::default());
+    let alert_relayer = AlertRelayer::new(
+        "0.1.0".to_string(),
+        Default::default(),
+        AlertSignatureConfig::default(),
+    );
 
     let alert_notifier = {
         let alert_notifier = alert_relayer.notifier();

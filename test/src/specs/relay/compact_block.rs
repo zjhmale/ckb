@@ -1,11 +1,11 @@
 use crate::utils::{
     build_block, build_block_transactions, build_compact_block, build_compact_block_with_prefilled,
-    build_header, clear_messages, wait_until,
+    build_header, build_headers, clear_messages, wait_until,
 };
 use crate::{Net, Spec, TestProtocol};
 use ckb_core::block::BlockBuilder;
 use ckb_core::cell::{resolve_transaction, ResolvedTransaction};
-use ckb_core::header::HeaderBuilder;
+use ckb_core::header::{Header, HeaderBuilder};
 use ckb_core::transaction::{CellInput, TransactionBuilder};
 use ckb_dao::DaoCalculator;
 use ckb_protocol::{get_root, RelayMessage, RelayPayload, SyncMessage, SyncPayload};
@@ -123,11 +123,12 @@ impl Spec for CompactBlockPrefilled {
     }
 }
 
-pub struct CompactBlockMissingTxs;
+pub struct CompactBlockMissingFreshTxs;
 
-impl Spec for CompactBlockMissingTxs {
-    // Case: Send to node0 a block which missing a tx, node0 should send `GetBlockTransactions`
-    // back for requesting these missing txs
+impl Spec for CompactBlockMissingFreshTxs {
+    // Case: Send to node0 a block which missing a tx, which is a fresh tx for
+    // tx_pool, node0 should send `GetBlockTransactions` back for requesting
+    // these missing txs
     fn run(&self, net: Net) {
         let node = &net.nodes[0];
         net.exit_ibd_mode();
@@ -172,6 +173,56 @@ impl Spec for CompactBlockMissingTxs {
 
     fn test_protocols(&self) -> Vec<TestProtocol> {
         vec![TestProtocol::sync(), TestProtocol::relay()]
+    }
+}
+
+pub struct CompactBlockMissingNotFreshTxs;
+
+impl Spec for CompactBlockMissingNotFreshTxs {
+    // Case: As for the missing transactions of a compact block, we should try to find it from
+    //       tx_pool. If we find out, we can reconstruct the target block without any requests
+    //       to the peer.
+    // 1. Put the target tx into tx_pool, and proposal it. Then move it into proposal window
+    // 2. Relay target block which contains the target transaction as committed transaction. Expect
+    //    successful to reconstruct the target block and grow up.
+    fn run(&self, net: Net) {
+        let node = &net.nodes[0];
+        net.exit_ibd_mode();
+        net.connect(node);
+        let (peer_id, _, _) = net.receive();
+
+        // Build the target transaction
+        let new_tx = node.new_transaction(node.get_tip_block().transactions()[0].hash().clone());
+        node.submit_block(
+            &node
+                .new_block_builder(None, None, None)
+                .proposal(new_tx.proposal_short_id())
+                .build(),
+        );
+        node.generate_blocks(3);
+
+        // Generate the target block which contains the target transaction as a committed transaction
+        let new_block = node
+            .new_block_builder(None, None, None)
+            .transaction(new_tx.clone())
+            .build();
+
+        // Put `new_tx` as an not fresh tx into tx_pool
+        node.rpc_client().send_transaction((&new_tx).into());
+
+        // Relay the target block
+        clear_messages(&net);
+        net.send(
+            NetworkProtocol::RELAY.into(),
+            peer_id,
+            build_compact_block(&new_block),
+        );
+        let ret = wait_until(10, move || node.get_tip_block() == new_block);
+        assert!(ret, "Node0 should be able to reconstruct the block");
+    }
+
+    fn test_protocols(&self) -> Vec<TestProtocol> {
+        vec![TestProtocol::relay(), TestProtocol::sync()]
     }
 }
 
@@ -363,5 +414,63 @@ impl Spec for CompactBlockRelayParentOfOrphanBlock {
 
     fn test_protocols(&self) -> Vec<TestProtocol> {
         vec![TestProtocol::sync(), TestProtocol::relay()]
+    }
+}
+
+pub struct CompactBlockRelayLessThenSharedBestKnown;
+
+impl Spec for CompactBlockRelayLessThenSharedBestKnown {
+    // Case: Relay a compact block which has lower total difficulty than shared_best_known
+    // 1. Synchronize Headers[Tip+1, Tip+10]
+    // 2. Relay CompactBlock[Tip+1]
+    fn run(&self, net: Net) {
+        let node0 = &net.nodes[0];
+        let node1 = &net.nodes[1];
+        net.exit_ibd_mode();
+        net.connect(node0);
+        let (peer_id, _, _) = net.receive();
+
+        assert_eq!(node0.get_tip_block(), node1.get_tip_block());
+        let old_tip = node1.get_tip_block_number();
+        node1.generate_blocks(10);
+        let headers: Vec<Header> = (old_tip + 1..node1.get_tip_block_number())
+            .map(|i| node1.rpc_client().get_header_by_number(i).unwrap().into())
+            .collect();
+        net.send(
+            NetworkProtocol::SYNC.into(),
+            peer_id,
+            build_headers(&headers),
+        );
+        {
+            let (_, _, data) = net.receive_timeout(Duration::from_secs(5)).expect("");
+            assert_eq!(
+                get_root::<SyncMessage>(&data).unwrap().payload_type(),
+                SyncPayload::GetBlocks,
+                "Node0 should send GetBlocks message",
+            );
+        }
+
+        let new_block = node0.new_block(None, None, None);
+        net.send(
+            NetworkProtocol::RELAY.into(),
+            peer_id,
+            build_compact_block(&new_block),
+        );
+        assert!(
+            wait_until(20, move || node0.get_tip_block().header().number() == old_tip + 1),
+            "node0 should process the new block, even its difficulty is less then best_shared_known",
+        );
+    }
+
+    fn num_nodes(&self) -> usize {
+        2
+    }
+
+    fn test_protocols(&self) -> Vec<TestProtocol> {
+        vec![TestProtocol::sync(), TestProtocol::relay()]
+    }
+
+    fn connect_all(&self) -> bool {
+        false
     }
 }

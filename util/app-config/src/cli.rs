@@ -30,6 +30,7 @@ pub const ARG_BUNDLED: &str = "bundled";
 pub const ARG_BA_CODE_HASH: &str = "ba-code-hash";
 pub const ARG_BA_ARG: &str = "ba-arg";
 pub const ARG_BA_DATA: &str = "ba-data";
+pub const ARG_BA_ADVANCED: &str = "ba-advanced";
 pub const ARG_FROM: &str = "from";
 pub const ARG_TO: &str = "to";
 
@@ -68,7 +69,11 @@ pub fn get_matches(version: &Version) -> ArgMatches<'static> {
 }
 
 fn run() -> App<'static, 'static> {
-    SubCommand::with_name(CMD_RUN).about("Runs ckb node")
+    SubCommand::with_name(CMD_RUN).about("Runs ckb node").arg(
+        Arg::with_name(ARG_BA_ADVANCED)
+            .long(ARG_BA_ADVANCED)
+            .help("Allows any block assembler code hash and args"),
+    )
 }
 
 fn miner() -> App<'static, 'static> {
@@ -79,8 +84,8 @@ pub(crate) fn stats() -> App<'static, 'static> {
     SubCommand::with_name(CMD_STATS)
         .about(
             "Statics chain infomation\n\
-             Example: \n\
-             ckb -- -C <dir> stats -- from 1 --to 500",
+             Example:\n\
+             ckb -C <dir> stats --from 1 --to 500",
         )
         .arg(
             Arg::with_name(ARG_FROM)
@@ -286,7 +291,11 @@ fn init() -> App<'static, 'static> {
                 .number_of_values(1)
                 .help("Sets args in [block_assembler]"),
         )
-        .group(ArgGroup::with_name(GROUP_BA).args(&[ARG_BA_CODE_HASH, ARG_BA_ARG]))
+        .group(
+            ArgGroup::with_name(GROUP_BA)
+                .args(&[ARG_BA_CODE_HASH, ARG_BA_ARG])
+                .multiple(true),
+        )
         .arg(
             Arg::with_name(ARG_BA_DATA)
                 .long(ARG_BA_DATA)
@@ -378,5 +387,32 @@ mod tests {
             .contains("The following required arguments were not provided"));
         assert!(err.message.contains("--ba-arg"));
         assert!(err.message.contains("--ba-code-hash"));
+    }
+
+    #[test]
+    fn ba_arg_and_ba_code_hash() {
+        let ok_matches = basic_app().get_matches_from_safe(&[
+            "ckb",
+            "init",
+            "--ba-code-hash",
+            "0x00",
+            "--ba-arg",
+            "0x00",
+        ]);
+        assert!(
+            ok_matches.is_ok(),
+            "--ba-code-hash is OK with --ba-arg, but gets error: {:?}",
+            ok_matches.err()
+        );
+    }
+
+    #[test]
+    fn ba_advanced() {
+        let matches = basic_app()
+            .get_matches_from_safe(&["ckb", "run", "--ba-advanced"])
+            .unwrap();
+        let sub_matches = matches.subcommand().1.unwrap();
+
+        assert_eq!(1, sub_matches.occurrences_of(ARG_BA_ADVANCED));
     }
 }

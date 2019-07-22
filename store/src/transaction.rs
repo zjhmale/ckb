@@ -155,6 +155,7 @@ impl StoreTransaction {
                     TransactionMeta::new_cellbase(
                         block.header().number(),
                         block.header().epoch(),
+                        block.header().hash().to_owned(),
                         outputs_len,
                         false,
                     ),
@@ -165,6 +166,7 @@ impl StoreTransaction {
                     TransactionMeta::new(
                         block.header().number(),
                         block.header().epoch(),
+                        block.header().hash().to_owned(),
                         outputs_len,
                         false,
                     ),

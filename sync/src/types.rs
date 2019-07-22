@@ -1,10 +1,10 @@
+use crate::block_status::BlockStatus;
 use crate::relayer::compact_block::CompactBlock;
 use crate::synchronizer::OrphanBlockPool;
 use crate::NetworkProtocol;
 use crate::BLOCK_DOWNLOAD_TIMEOUT;
 use crate::MAX_PEERS_PER_BLOCK;
 use crate::{MAX_HEADERS_LEN, MAX_TIP_AGE};
-use bitflags::bitflags;
 use ckb_chain::chain::ChainController;
 use ckb_chain_spec::consensus::Consensus;
 use ckb_core::block::Block;
@@ -12,7 +12,7 @@ use ckb_core::extras::EpochExt;
 use ckb_core::header::{BlockNumber, Header};
 use ckb_core::transaction::ProposalShortId;
 use ckb_core::Cycle;
-use ckb_logger::{debug, debug_target};
+use ckb_logger::{debug, debug_target, error};
 use ckb_network::{CKBProtocolContext, PeerIndex};
 use ckb_protocol::SyncMessage;
 use ckb_shared::shared::Shared;
@@ -21,6 +21,7 @@ use ckb_store::ChainStore;
 use ckb_traits::ChainProvider;
 use ckb_util::{Mutex, MutexGuard};
 use ckb_util::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use ckb_verification::HeaderResolverWrapper;
 use failure::Error as FailureError;
 use faketime::unix_time_as_millis;
 use flatbuffers::FlatBufferBuilder;
@@ -49,8 +50,8 @@ const TX_ASKED_SIZE: usize = TX_FILTER_SIZE;
 const ORPHAN_BLOCK_SIZE: usize = 1024;
 
 // State used to enforce CHAIN_SYNC_TIMEOUT
-// Only in effect for outbound, non-manual connections, with
-// m_protect == false
+// Only in effect for connections that are outbound, non-manual,
+// non-protected and non-whitelist.
 // Algorithm: if a peer's best known block has less work than our tip,
 // set a timeout CHAIN_SYNC_TIMEOUT seconds in the future:
 //   - If at timeout their best known block now has more work than our tip
@@ -62,14 +63,13 @@ const ORPHAN_BLOCK_SIZE: usize = 1024;
 //     If their best known block is still behind when that new timeout is
 //     reached, disconnect.
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ChainSyncState {
     pub timeout: u64,
     pub work_header: Option<Header>,
     pub total_difficulty: Option<U256>,
     pub sent_getheaders: bool,
     pub not_sync_until: Option<u64>,
-    pub protect: bool,
 }
 
 impl Default for ChainSyncState {
@@ -80,17 +80,23 @@ impl Default for ChainSyncState {
             total_difficulty: None,
             sent_getheaders: false,
             not_sync_until: None,
-            protect: false,
         }
     }
 }
 
-#[derive(Clone, Default, Debug, PartialEq)]
+#[derive(Clone, Default, Debug, Copy)]
+pub struct PeerFlags {
+    pub is_outbound: bool,
+    pub is_protect: bool,
+    pub is_whitelist: bool,
+}
+
+#[derive(Clone, Default, Debug)]
 pub struct PeerState {
     pub sync_started: bool,
     pub headers_sync_timeout: Option<u64>,
     pub last_block_announcement: Option<u64>, //ms
-    pub is_outbound: bool,
+    pub peer_flags: PeerFlags,
     pub disconnect: bool,
     pub chain_sync: ChainSyncState,
     // The key is a `timeout`, means do not ask the tx before `timeout`.
@@ -102,18 +108,14 @@ pub struct PeerState {
 }
 
 impl PeerState {
-    pub fn new(
-        is_outbound: bool,
-        chain_sync: ChainSyncState,
-        headers_sync_timeout: Option<u64>,
-    ) -> PeerState {
+    pub fn new(peer_flags: PeerFlags) -> PeerState {
         PeerState {
             sync_started: false,
-            headers_sync_timeout,
+            headers_sync_timeout: None,
             last_block_announcement: None,
-            is_outbound,
+            peer_flags,
             disconnect: false,
-            chain_sync,
+            chain_sync: ChainSyncState::default(),
             tx_ask_for_map: BTreeMap::default(),
             tx_ask_for_set: HashSet::default(),
             best_known_header: None,
@@ -122,8 +124,8 @@ impl PeerState {
     }
 
     pub fn can_sync(&self, now: u64, ibd: bool) -> bool {
-        // only sync with outbound peer in IBD
-        (self.is_outbound || !ibd)
+        // only sync with outbound/whitelist peer in IBD
+        ((self.peer_flags.is_outbound || self.peer_flags.is_whitelist) || !ibd)
             && !self.sync_started
             && self
                 .chain_sync
@@ -273,9 +275,8 @@ impl Default for InflightState {
 }
 
 impl InflightState {
-    #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn remove(&mut self, peer: &PeerIndex) {
-        self.peers.remove(peer);
+    pub fn remove(&mut self, peer: PeerIndex) {
+        self.peers.remove(&peer);
     }
 }
 
@@ -324,13 +325,11 @@ impl InflightBlocks {
         self.states.len()
     }
 
-    #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn peer_inflight_count(&self, peer: &PeerIndex) -> usize {
-        self.blocks.get(peer).map(HashSet::len).unwrap_or(0)
+    pub fn peer_inflight_count(&self, peer: PeerIndex) -> usize {
+        self.blocks.get(&peer).map(HashSet::len).unwrap_or(0)
     }
-    #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn inflight_block_by_peer(&self, peer: &PeerIndex) -> Option<&FnvHashSet<H256>> {
-        self.blocks.get(peer)
+    pub fn inflight_block_by_peer(&self, peer: PeerIndex) -> Option<&FnvHashSet<H256>> {
+        self.blocks.get(&peer)
     }
 
     pub fn inflight_state_by_block(&self, block: &H256) -> Option<&InflightState> {
@@ -344,7 +343,7 @@ impl InflightBlocks {
             let outdate = (v.timestamp + BLOCK_DOWNLOAD_TIMEOUT) < now;
             if outdate {
                 for peer in &v.peers {
-                    blocks.get_mut(peer).map(|set| set.remove(&k));
+                    blocks.get_mut(peer).map(|set| set.remove(k));
                 }
             }
             !outdate
@@ -368,10 +367,9 @@ impl InflightBlocks {
         ret
     }
 
-    #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn remove_by_peer(&mut self, peer: &PeerIndex) -> bool {
+    pub fn remove_by_peer(&mut self, peer: PeerIndex) -> bool {
         self.blocks
-            .remove(peer)
+            .remove(&peer)
             .map(|blocks| {
                 for block in blocks {
                     if let Some(state) = self.states.get_mut(&block) {
@@ -395,25 +393,14 @@ impl InflightBlocks {
 }
 
 impl Peers {
-    pub fn on_connected(
-        &self,
-        peer: PeerIndex,
-        headers_sync_timeout: Option<u64>,
-        protect: bool,
-        is_outbound: bool,
-    ) {
+    pub fn on_connected(&self, peer: PeerIndex, peer_flags: PeerFlags) {
         self.state
             .write()
             .entry(peer)
             .and_modify(|state| {
-                state.headers_sync_timeout = headers_sync_timeout;
-                state.chain_sync.protect = protect;
+                state.peer_flags = peer_flags;
             })
-            .or_insert_with(|| {
-                let mut chain_sync = ChainSyncState::default();
-                chain_sync.protect = protect;
-                PeerState::new(is_outbound, chain_sync, headers_sync_timeout)
-            });
+            .or_insert_with(|| PeerState::new(peer_flags));
     }
 
     pub fn get_best_known_header(&self, pi: PeerIndex) -> Option<HeaderView> {
@@ -447,10 +434,7 @@ impl Peers {
     pub fn new_header_received(&self, peer: PeerIndex, header_view: &HeaderView) {
         if let Some(peer_state) = self.state.write().get_mut(&peer) {
             if let Some(ref hv) = peer_state.best_known_header {
-                if header_view.total_difficulty() > hv.total_difficulty()
-                    || (header_view.total_difficulty() == hv.total_difficulty()
-                        && header_view.hash() < hv.hash())
-                {
+                if header_view.is_better_than(hv.total_difficulty(), hv.hash()) {
                     peer_state.best_known_header = Some(header_view.clone());
                 }
             } else {
@@ -608,26 +592,6 @@ impl EpochIndices {
     }
 }
 
-bitflags! {
-    pub struct BlockStatus: u32 {
-        const UNKNOWN            = 0;
-        const VALID_HEADER       = 1;
-        const VALID_TREE         = 2;
-        const VALID_TRANSACTIONS = 3;
-        const VALID_CHAIN        = 4;
-        const VALID_SCRIPTS      = 5;
-
-        const VALID_MASK         = Self::VALID_HEADER.bits | Self::VALID_TREE.bits | Self::VALID_TRANSACTIONS.bits |
-                                   Self::VALID_CHAIN.bits | Self::VALID_SCRIPTS.bits;
-        const BLOCK_HAVE_DATA    = 8;
-        const BLOCK_HAVE_UNDO    = 16;
-        const BLOCK_HAVE_MASK    = Self::BLOCK_HAVE_DATA.bits | Self::BLOCK_HAVE_UNDO.bits;
-        const FAILED_VALID       = 32;
-        const FAILED_CHILD       = 64;
-        const FAILED_MASK        = Self::FAILED_VALID.bits | Self::FAILED_CHILD.bits;
-    }
-}
-
 pub struct SyncSharedState {
     shared: Shared,
 
@@ -639,13 +603,12 @@ pub struct SyncSharedState {
     shared_best_header: RwLock<HeaderView>,
     epoch_map: RwLock<EpochIndices>,
     header_map: RwLock<HashMap<H256, HeaderView>>,
-    block_status_map: Mutex<hashbrown::HashMap<H256, BlockStatus>>,
+    block_status_map: Mutex<HashMap<H256, BlockStatus>>,
     tx_filter: Mutex<Filter<H256>>,
 
     /* Status relevant to peers */
     peers: Peers,
     misbehavior: RwLock<FnvHashMap<PeerIndex, u32>>,
-    known_blocks: Mutex<KnownFilter>,
     known_txs: Mutex<KnownFilter>,
 
     /* Cached items which we had received but not completely process */
@@ -688,11 +651,10 @@ impl SyncSharedState {
             shared_best_header,
             header_map: RwLock::new(HashMap::new()),
             epoch_map: RwLock::new(EpochIndices::default()),
-            block_status_map: Mutex::new(hashbrown::HashMap::new()),
+            block_status_map: Mutex::new(HashMap::new()),
             tx_filter: Mutex::new(Filter::new(TX_FILTER_SIZE)),
             peers: Peers::default(),
             misbehavior: RwLock::new(FnvHashMap::default()),
-            known_blocks: Mutex::new(KnownFilter::default()),
             known_txs: Mutex::new(KnownFilter::default()),
             pending_get_block_proposals: Mutex::new(FnvHashMap::default()),
             pending_compact_blocks: Mutex::new(FnvHashMap::default()),
@@ -724,9 +686,6 @@ impl SyncSharedState {
                 .and_modify(|s| *s += score)
                 .or_insert_with(|| score);
         }
-    }
-    pub fn known_blocks(&self) -> MutexGuard<KnownFilter> {
-        self.known_blocks.lock()
     }
     pub fn known_txs(&self) -> MutexGuard<KnownFilter> {
         self.known_txs.lock()
@@ -786,10 +745,40 @@ impl SyncSharedState {
         *self.shared_best_header.write() = header;
     }
 
-    pub fn insert_header_view(&self, hash: H256, mut view: HeaderView) {
-        view.build_skip(|hash| self.get_header_view(hash));
-        self.header_map.write().insert(hash, view);
+    // Update the shared_best_header if need
+    // Update the peer's best_known_header
+    // Update the header_map
+    // Update the epoch_map
+    // Update the block_status_map
+    pub fn insert_valid_header(&self, peer: PeerIndex, header: &Header, epoch: EpochExt) {
+        let parent_view = self
+            .get_header_view(header.parent_hash())
+            .expect("parent should be verified");
+        let mut header_view = {
+            let total_difficulty = parent_view.total_difficulty() + header.difficulty();
+            let total_uncles_count =
+                parent_view.total_uncles_count() + u64::from(header.uncles_count());
+            HeaderView::new(header.clone(), total_difficulty, total_uncles_count)
+        };
+
+        // Update shared_best_header if the arrived header has greater difficulty
+        let shared_best_header = self.shared_best_header();
+        if header_view.is_better_than(
+            shared_best_header.total_difficulty(),
+            shared_best_header.hash(),
+        ) {
+            self.set_shared_best_header(header_view.clone());
+        }
+
+        self.peers().new_header_received(peer, &header_view);
+        header_view.build_skip(|hash| self.get_header_view(hash));
+        self.header_map
+            .write()
+            .insert(header.hash().to_owned(), header_view);
+        self.insert_epoch(header, epoch);
+        self.insert_block_status(header.hash().to_owned(), BlockStatus::HEADER_VALID);
     }
+
     pub fn remove_header_view(&self, hash: &H256) {
         self.header_map.write().remove(hash);
     }
@@ -1038,16 +1027,19 @@ impl SyncSharedState {
         ids.iter().map(|id| locked.remove(id)).collect()
     }
 
-    pub fn contains_orphan_block(&self, header: &Header) -> bool {
-        self.orphan_block_pool.contains(header)
-    }
-
     pub fn insert_orphan_block(&self, block: Block) {
-        self.orphan_block_pool.insert(block)
+        let block_hash = block.header().hash().to_owned();
+        self.orphan_block_pool.insert(block);
+        self.insert_block_status(block_hash, BlockStatus::BLOCK_RECEIVED);
     }
 
     pub fn remove_orphan_by_parent(&self, parent_hash: &H256) -> Vec<Block> {
-        self.orphan_block_pool.remove_blocks_by_parent(parent_hash)
+        let blocks = self.orphan_block_pool.remove_blocks_by_parent(parent_hash);
+        let mut block_status_map = self.block_status_map.lock();
+        blocks.iter().for_each(|b| {
+            block_status_map.remove(b.header().hash());
+        });
+        blocks
     }
 
     pub fn get_block_status(&self, block_hash: &H256) -> BlockStatus {
@@ -1055,18 +1047,42 @@ impl SyncSharedState {
         match locked.get(block_hash).cloned() {
             Some(status) => status,
             None => {
-                if self.shared.store().get_block_header(block_hash).is_some() {
-                    locked.insert(block_hash.clone(), BlockStatus::BLOCK_HAVE_MASK);
-                    BlockStatus::BLOCK_HAVE_MASK
-                } else {
-                    BlockStatus::UNKNOWN
+                let verified = self
+                    .shared
+                    .store()
+                    .get_block_ext(block_hash)
+                    .map(|block_ext| block_ext.verified);
+                match verified {
+                    None => BlockStatus::UNKNOWN,
+                    // NOTE: Don't insert `BLOCK_STORED` inside `block_status_map`.
+                    Some(None) => BlockStatus::BLOCK_STORED,
+                    Some(Some(true)) => {
+                        locked.insert(block_hash.clone(), BlockStatus::BLOCK_VALID);
+                        BlockStatus::BLOCK_VALID
+                    }
+                    Some(Some(false)) => {
+                        locked.insert(block_hash.clone(), BlockStatus::BLOCK_INVALID);
+                        BlockStatus::BLOCK_INVALID
+                    }
                 }
             }
         }
     }
 
+    pub fn contains_block_status(&self, block_hash: &H256, status: BlockStatus) -> bool {
+        self.get_block_status(block_hash).contains(status)
+    }
+
+    pub fn unknown_block_status(&self, block_hash: &H256) -> bool {
+        self.get_block_status(block_hash) == BlockStatus::UNKNOWN
+    }
+
     pub fn insert_block_status(&self, block_hash: H256, status: BlockStatus) {
         self.block_status_map.lock().insert(block_hash, status);
+    }
+
+    pub fn remove_block_status(&self, block_hash: &H256) {
+        self.block_status_map.lock().remove(block_hash);
     }
 
     pub fn clear_get_block_proposals(&self) -> FnvHashMap<ProposalShortId, FnvHashSet<PeerIndex>> {
@@ -1086,8 +1102,7 @@ impl SyncSharedState {
 
     pub fn disconnected(&self, pi: PeerIndex) -> Option<PeerState> {
         self.known_txs.lock().inner.remove(&pi);
-        self.known_blocks.lock().inner.remove(&pi);
-        self.inflight_blocks.write().remove_by_peer(&pi);
+        self.inflight_blocks.write().remove_by_peer(pi);
         self.peers().disconnected(pi)
     }
 
@@ -1115,9 +1130,10 @@ impl SyncSharedState {
         }
 
         // Attempt to accept the given block if its parent already exist in database
-        if let Err(err) = self.accept_block(chain, pi, Arc::clone(&block)) {
-            debug!("accept block {:?} error {:?}", block, err);
-            return Err(err);
+        let ret = self.accept_block(chain, pi, Arc::clone(&block));
+        if ret.is_err() {
+            debug!("accept block {:?} {:?}", block, ret);
+            return ret;
         }
 
         // The above block has been accepted. Attempt to accept its descendant blocks in orphan pool.
@@ -1146,7 +1162,7 @@ impl SyncSharedState {
             }
         }
 
-        Ok(true)
+        ret
     }
 
     fn accept_block(
@@ -1154,20 +1170,42 @@ impl SyncSharedState {
         chain: &ChainController,
         peer: PeerIndex,
         block: Arc<Block>,
-    ) -> Result<(), FailureError> {
-        if let Err(err) = chain.process_block(Arc::clone(&block), true) {
-            self.insert_block_status(block.header().hash().to_owned(), BlockStatus::FAILED_MASK);
-            return Err(err);
+    ) -> Result<bool, FailureError> {
+        let ret = chain.process_block(Arc::clone(&block), true);
+        if ret.is_err() {
+            error!("accept block {:?} {:?}", block, ret);
+            self.insert_block_status(block.header().hash().to_owned(), BlockStatus::BLOCK_INVALID);
+            return ret;
+        } else {
+            // Clear the newly inserted block from block_status_map.
+            //
+            // We don't know whether the actual block status is BLOCK_VALID or BLOCK_INVALID.
+            // So we just simply remove the corresponding in-memory block status,
+            // and the next time `get_block_status` would acquire the real-time
+            // status via fetching block_ext from the database.
+            self.remove_block_status(block.header().hash());
         }
 
         self.remove_header_view(block.header().hash());
-        self.insert_block_status(
-            block.header().hash().to_owned(),
-            BlockStatus::BLOCK_HAVE_MASK,
-        );
         self.peers()
             .set_last_common_header(peer, block.header().clone());
-        Ok(())
+        ret
+    }
+
+    pub(crate) fn new_header_resolver<'a>(
+        &'a self,
+        header: &'a Header,
+        parent: Header,
+    ) -> HeaderResolverWrapper<'a> {
+        let epoch = self
+            .get_epoch_ext(parent.hash())
+            .map(|ext| ext)
+            .map(|last_epoch| {
+                self.next_epoch_ext(&last_epoch, &parent)
+                    .unwrap_or(last_epoch)
+            });
+
+        HeaderResolverWrapper::build(header, Some(parent), epoch)
     }
 }
 
@@ -1178,7 +1216,7 @@ mod tests {
     use ckb_core::header::HeaderBuilder;
     use rand::{thread_rng, Rng};
 
-    const SKIPLIST_LENGTH: u64 = 500_000;
+    const SKIPLIST_LENGTH: u64 = 10_000;
 
     #[test]
     fn test_get_ancestor_use_skip_list() {
@@ -1231,9 +1269,9 @@ mod tests {
 
             header
         };
-        for _ in 0..1000 {
+        for _ in 0..100 {
             let from: u64 = rng.gen_range(0, SKIPLIST_LENGTH);
-            let to: u64 = rng.gen_range(0, from);
+            let to: u64 = rng.gen_range(0, from + 1);
             let view_from = &header_map[&hashes[&from]];
             let view_to = &header_map[&hashes[&to]];
             let view_0 = &header_map[&hashes[&0]];

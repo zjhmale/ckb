@@ -276,7 +276,15 @@ impl<'a> TryFrom<protos::Script<'a>> for Script {
             .collect::<Option<_>>()
             .unwrap_some()?;
         let code_hash = script.code_hash().unwrap_some()?.try_into()?;
-        let ret = Script { args, code_hash };
+        let hash_type = script
+            .hash_type()
+            .try_into()
+            .map_err(|_| Error::Deserialize)?;
+        let ret = Script {
+            args,
+            code_hash,
+            hash_type,
+        };
         Ok(ret)
     }
 }
@@ -374,6 +382,7 @@ impl TryFrom<&protos::EpochExt> for EpochExt {
 impl<'a> TryFrom<protos::TransactionMeta<'a>> for TransactionMeta {
     type Error = Error;
     fn try_from(proto: protos::TransactionMeta<'a>) -> Result<Self> {
+        let block_hash = proto.block_hash().unwrap_some()?;
         let bits = proto
             .bits()
             .and_then(|p| p.seq())
@@ -382,6 +391,7 @@ impl<'a> TryFrom<protos::TransactionMeta<'a>> for TransactionMeta {
         let ret = TransactionMetaBuilder::default()
             .block_number(proto.block_number())
             .epoch_number(proto.epoch_number())
+            .block_hash(block_hash.try_into()?)
             .cellbase(proto.cellbase())
             .bits(bits)
             .len(proto.len() as usize)

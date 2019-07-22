@@ -15,11 +15,16 @@ use std::fmt;
 pub struct BlockInfo {
     pub number: BlockNumber,
     pub epoch: EpochNumber,
+    pub hash: H256,
 }
 
 impl BlockInfo {
-    pub fn new(number: BlockNumber, epoch: EpochNumber) -> Self {
-        BlockInfo { number, epoch }
+    pub fn new(number: BlockNumber, epoch: EpochNumber, hash: H256) -> Self {
+        BlockInfo {
+            number,
+            epoch,
+            hash,
+        }
     }
 }
 
@@ -382,6 +387,7 @@ impl<'a> CellProvider<'a> for BlockCellProvider<'a> {
                             block_info: Some(BlockInfo {
                                 number: self.block.header().number(),
                                 epoch: self.block.header().epoch(),
+                                hash: self.block.header().hash().to_owned(),
                             }),
                             cellbase: *i == 0,
                         })
@@ -611,6 +617,7 @@ mod tests {
             block_info: Some(BlockInfo {
                 number: 1,
                 epoch: 1,
+                hash: H256::zero(),
             }),
             capacity: cell_output.capacity,
             data_hash: Some(cell_output.data_hash()),

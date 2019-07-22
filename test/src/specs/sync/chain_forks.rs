@@ -1,5 +1,4 @@
 use crate::{Net, Spec};
-use ckb_app_config::CKBAppConfig;
 use ckb_core::block::{Block, BlockBuilder};
 use ckb_core::transaction::{Transaction, TransactionBuilder};
 use ckb_core::{capacity_bytes, Capacity};
@@ -96,11 +95,6 @@ impl Spec for ChainFork2 {
     fn connect_all(&self) -> bool {
         false
     }
-
-    // workaround to disable node discovery
-    fn modify_ckb_config(&self) -> Box<dyn Fn(&mut CKBAppConfig) -> ()> {
-        Box::new(|config| config.network.connect_outbound_interval_secs = 100_000)
-    }
 }
 
 pub struct ChainFork3;
@@ -120,8 +114,8 @@ impl Spec for ChainFork3 {
         node0.generate_blocks(2);
 
         info!("Connect all nodes");
-        node0.connect(node1);
-        node0.connect(node2);
+        node1.connect(node0);
+        node2.connect(node0);
         net.waiting_for_sync(2);
 
         info!("Disconnect all nodes");
@@ -149,14 +143,14 @@ impl Spec for ChainFork3 {
         node1.process_block_without_verify(&invalid_block);
         assert_eq!(5, node1.rpc_client().get_tip_block_number());
 
-        info!("Reconnect node1");
-        node0.connect(node1);
+        info!("Reconnect node1 and node1 should be banned");
+        node0.connect_and_wait_ban(node1);
 
         info!("Generate 1 block (G) on node2");
         node2.generate_blocks(1);
         info!("Reconnect node2");
-        node0.connect(node2);
-        node1.connect(node2);
+        node2.connect(node0);
+        node2.connect_and_wait_ban(node1);
         node0.waiting_for_sync(node2, 4);
     }
 
@@ -166,11 +160,6 @@ impl Spec for ChainFork3 {
 
     fn connect_all(&self) -> bool {
         false
-    }
-
-    // workaround to disable node discovery
-    fn modify_ckb_config(&self) -> Box<dyn Fn(&mut CKBAppConfig) -> ()> {
-        Box::new(|config| config.network.connect_outbound_interval_secs = 100_000)
     }
 }
 
@@ -191,8 +180,8 @@ impl Spec for ChainFork4 {
         node0.generate_blocks(2);
 
         info!("Connect all nodes");
-        node0.connect(node1);
-        node0.connect(node2);
+        node1.connect(node0);
+        node2.connect(node0);
         net.waiting_for_sync(2);
 
         info!("Disconnect all nodes");
@@ -220,14 +209,14 @@ impl Spec for ChainFork4 {
         node1.process_block_without_verify(&invalid_block);
         assert_eq!(5, node1.rpc_client().get_tip_block_number());
 
-        info!("Reconnect node1");
-        node0.connect(node1);
+        info!("Reconnect node1 and node1 should be banned");
+        node0.connect_and_wait_ban(node1);
 
         info!("Generate 1 block (G) on node2");
         node2.generate_blocks(1);
         info!("Reconnect node2");
-        node0.connect(node2);
-        node1.connect(node2);
+        node2.connect(node0);
+        node2.connect_and_wait_ban(node1);
         node0.waiting_for_sync(node2, 4);
     }
 
@@ -237,11 +226,6 @@ impl Spec for ChainFork4 {
 
     fn connect_all(&self) -> bool {
         false
-    }
-
-    // workaround to disable node discovery
-    fn modify_ckb_config(&self) -> Box<dyn Fn(&mut CKBAppConfig) -> ()> {
-        Box::new(|config| config.network.connect_outbound_interval_secs = 100_000)
     }
 }
 
@@ -265,8 +249,8 @@ impl Spec for ChainFork5 {
         node0.submit_transaction(&transaction);
         node0.generate_blocks(1);
         info!("Connect all nodes");
-        node0.connect(node1);
-        node0.connect(node2);
+        node1.connect(node0);
+        node2.connect(node0);
         net.waiting_for_sync(2);
 
         info!("Disconnect all nodes");
@@ -295,14 +279,14 @@ impl Spec for ChainFork5 {
         node1.process_block_without_verify(&invalid_block);
         assert_eq!(5, node1.rpc_client().get_tip_block_number());
 
-        info!("Reconnect node1");
-        node0.connect(node1);
+        info!("Reconnect node1 and node1 should be banned");
+        node0.connect_and_wait_ban(node1);
 
         info!("Generate 1 block (G) on node2");
         node2.generate_blocks(1);
         info!("Reconnect node2");
-        node0.connect(node2);
-        node1.connect(node2);
+        node2.connect(node0);
+        node2.connect_and_wait_ban(node1);
         node0.waiting_for_sync(node2, 4);
     }
 
@@ -312,11 +296,6 @@ impl Spec for ChainFork5 {
 
     fn connect_all(&self) -> bool {
         false
-    }
-
-    // workaround to disable node discovery
-    fn modify_ckb_config(&self) -> Box<dyn Fn(&mut CKBAppConfig) -> ()> {
-        Box::new(|config| config.network.connect_outbound_interval_secs = 100_000)
     }
 }
 
@@ -337,8 +316,8 @@ impl Spec for ChainFork6 {
         node0.generate_blocks(2);
 
         info!("Connect all nodes");
-        node0.connect(node1);
-        node0.connect(node2);
+        node1.connect(node0);
+        node2.connect(node0);
         net.waiting_for_sync(2);
 
         info!("Disconnect all nodes");
@@ -362,14 +341,14 @@ impl Spec for ChainFork6 {
         node1.process_block_without_verify(&invalid_block);
         assert_eq!(5, node1.rpc_client().get_tip_block_number());
 
-        info!("Reconnect node1");
-        node0.connect(node1);
+        info!("Reconnect node1 and node1 should be banned");
+        node0.connect_and_wait_ban(node1);
 
         info!("Generate 1 block (G) on node2");
         node2.generate_blocks(1);
         info!("Reconnect node2");
-        node0.connect(node2);
-        node1.connect(node2);
+        node2.connect(node0);
+        node2.connect_and_wait_ban(node1);
         node0.waiting_for_sync(node2, 4);
     }
 
@@ -379,11 +358,6 @@ impl Spec for ChainFork6 {
 
     fn connect_all(&self) -> bool {
         false
-    }
-
-    // workaround to disable node discovery
-    fn modify_ckb_config(&self) -> Box<dyn Fn(&mut CKBAppConfig) -> ()> {
-        Box::new(|config| config.network.connect_outbound_interval_secs = 100_000)
     }
 }
 
@@ -404,8 +378,8 @@ impl Spec for ChainFork7 {
         node0.generate_blocks(2);
 
         info!("Connect all nodes");
-        node0.connect(node1);
-        node0.connect(node2);
+        node1.connect(node0);
+        node2.connect(node0);
         net.waiting_for_sync(2);
 
         info!("Disconnect all nodes");
@@ -437,14 +411,14 @@ impl Spec for ChainFork7 {
         node1.process_block_without_verify(&invalid_block);
         assert_eq!(5, node1.rpc_client().get_tip_block_number());
 
-        info!("Reconnect node1");
-        node0.connect(node1);
+        info!("Reconnect node1 and node1 should be banned");
+        node0.connect_and_wait_ban(node1);
 
         info!("Generate 1 block (G) on node2");
         node2.generate_blocks(1);
         info!("Reconnect node2");
-        node0.connect(node2);
-        node1.connect(node2);
+        node2.connect(node0);
+        node2.connect_and_wait_ban(node1);
         node0.waiting_for_sync(node2, 4);
     }
 
@@ -454,11 +428,6 @@ impl Spec for ChainFork7 {
 
     fn connect_all(&self) -> bool {
         false
-    }
-
-    // workaround to disable node discovery
-    fn modify_ckb_config(&self) -> Box<dyn Fn(&mut CKBAppConfig) -> ()> {
-        Box::new(|config| config.network.connect_outbound_interval_secs = 100_000)
     }
 }
 

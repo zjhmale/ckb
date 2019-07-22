@@ -5,14 +5,14 @@ use crate::tests::util::{
 use ckb_chain_spec::consensus::Consensus;
 use ckb_core::block::{Block, BlockBuilder};
 use ckb_core::header::{Header, HeaderBuilder};
-use ckb_core::script::Script;
+use ckb_core::script::{Script, ScriptHashType};
 use ckb_core::transaction::{
     CellInput, CellOutput, OutPoint, ProposalShortId, Transaction, TransactionBuilder,
 };
 use ckb_core::uncle::UncleBlock;
 use ckb_core::{capacity_bytes, Bytes, Capacity};
 use ckb_dao_utils::genesis_dao_data;
-use ckb_test_chain_utils::create_always_success_cell;
+use ckb_test_chain_utils::always_success_cell;
 use ckb_traits::ChainProvider;
 use std::sync::Arc;
 
@@ -86,7 +86,7 @@ pub(crate) fn gen_block(
 }
 
 pub(crate) fn create_transaction(parent: &Transaction, index: u32) -> Transaction {
-    let (_, always_success_script) = create_always_success_cell();
+    let (_, always_success_script) = always_success_cell();
     let always_success_out_point = create_always_success_out_point();
 
     TransactionBuilder::default()
@@ -106,7 +106,7 @@ pub(crate) fn create_transaction(parent: &Transaction, index: u32) -> Transactio
 
 #[test]
 fn finalize_reward() {
-    let (_, always_success_script) = create_always_success_cell();
+    let (_, always_success_script) = always_success_cell();
     let tx = TransactionBuilder::default()
         .input(CellInput::new(OutPoint::null(), 0))
         .output(CellOutput::new(
@@ -147,11 +147,13 @@ fn finalize_reward() {
     let bob = Script {
         args: vec![Bytes::from(b"b0b".to_vec())],
         code_hash: always_success_script.code_hash.clone(),
+        hash_type: ScriptHashType::Data,
     };
 
     let alice = Script {
         args: vec![Bytes::from(b"a11ce".to_vec())],
         code_hash: always_success_script.code_hash.clone(),
+        hash_type: ScriptHashType::Data,
     };
 
     for i in 1..23 {

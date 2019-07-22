@@ -70,6 +70,7 @@ table CellOutput {
 table Script {
     args:           [Bytes];
     code_hash:      Bytes32;
+    hash_type:      uint8;
 }
 
 struct ProposalShortId {
@@ -155,6 +156,7 @@ struct EpochExt {
 table TransactionMeta {
     block_number:   uint64;
     epoch_number:   uint64;
+    block_hash:     Bytes32;
     cellbase:       bool;
     bits:           Bytes;
     len:            uint32;

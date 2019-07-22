@@ -11,8 +11,10 @@ use std::thread;
 use std::time::Duration;
 
 mod inflight_blocks;
+mod sync_shared_state;
 #[cfg(not(disable_faketime))]
 mod synchronizer;
+mod util;
 
 const DEFAULT_CHANNEL: usize = 128;
 
@@ -157,6 +159,7 @@ impl CKBProtocolContext for TestNetworkContext {
         task: Box<
             (dyn futures::future::Future<Item = (), Error = ()> + std::marker::Send + 'static),
         >,
+        _blocking: bool,
     ) -> Result<(), ckb_network::Error> {
         task.wait().expect("resolve future task error");
         Ok(())
@@ -223,7 +226,7 @@ impl CKBProtocolContext for TestNetworkContext {
         }
         Ok(())
     }
-    fn disconnect(&self, _peer_index: PeerIndex) -> Result<(), ckb_network::Error> {
+    fn disconnect(&self, _peer_index: PeerIndex, _msg: &str) -> Result<(), ckb_network::Error> {
         Ok(())
     }
     // Interact with NetworkState
@@ -238,5 +241,8 @@ impl CKBProtocolContext for TestNetworkContext {
     // Other methods
     fn protocol_id(&self) -> ProtocolId {
         self.protocol
+    }
+    fn send_paused(&self) -> bool {
+        false
     }
 }

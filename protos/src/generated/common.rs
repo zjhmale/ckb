@@ -1988,11 +1988,13 @@ impl<'a> Script<'a> {
         if let Some(x) = args.args {
             builder.add_args(x);
         }
+        builder.add_hash_type(args.hash_type);
         builder.finish()
     }
 
     pub const VT_ARGS: flatbuffers::VOffsetT = 4;
     pub const VT_CODE_HASH: flatbuffers::VOffsetT = 6;
+    pub const VT_HASH_TYPE: flatbuffers::VOffsetT = 8;
 
     #[inline]
     pub fn args(&self) -> Option<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<Bytes<'a>>>> {
@@ -2004,6 +2006,10 @@ impl<'a> Script<'a> {
     pub fn code_hash(&self) -> Option<&'a Bytes32> {
         self._tab.get::<Bytes32>(Script::VT_CODE_HASH, None)
     }
+    #[inline]
+    pub fn hash_type(&self) -> u8 {
+        self._tab.get::<u8>(Script::VT_HASH_TYPE, Some(0)).unwrap()
+    }
 }
 
 pub struct ScriptArgs<'a> {
@@ -2011,6 +2017,7 @@ pub struct ScriptArgs<'a> {
         flatbuffers::WIPOffset<flatbuffers::Vector<'a, flatbuffers::ForwardsUOffset<Bytes<'a>>>>,
     >,
     pub code_hash: Option<&'a Bytes32>,
+    pub hash_type: u8,
 }
 impl<'a> Default for ScriptArgs<'a> {
     #[inline]
@@ -2018,6 +2025,7 @@ impl<'a> Default for ScriptArgs<'a> {
         ScriptArgs {
             args: None,
             code_hash: None,
+            hash_type: 0,
         }
     }
 }
@@ -2040,6 +2048,11 @@ impl<'a: 'b, 'b> ScriptBuilder<'a, 'b> {
     pub fn add_code_hash(&mut self, code_hash: &'b Bytes32) {
         self.fbb_
             .push_slot_always::<&Bytes32>(Script::VT_CODE_HASH, code_hash);
+    }
+    #[inline]
+    pub fn add_hash_type(&mut self, hash_type: u8) {
+        self.fbb_
+            .push_slot::<u8>(Script::VT_HASH_TYPE, hash_type, 0);
     }
     #[inline]
     pub fn new(_fbb: &'b mut flatbuffers::FlatBufferBuilder<'a>) -> ScriptBuilder<'a, 'b> {
@@ -2263,15 +2276,19 @@ impl<'a> TransactionMeta<'a> {
         if let Some(x) = args.bits {
             builder.add_bits(x);
         }
+        if let Some(x) = args.block_hash {
+            builder.add_block_hash(x);
+        }
         builder.add_cellbase(args.cellbase);
         builder.finish()
     }
 
     pub const VT_BLOCK_NUMBER: flatbuffers::VOffsetT = 4;
     pub const VT_EPOCH_NUMBER: flatbuffers::VOffsetT = 6;
-    pub const VT_CELLBASE: flatbuffers::VOffsetT = 8;
-    pub const VT_BITS: flatbuffers::VOffsetT = 10;
-    pub const VT_LEN: flatbuffers::VOffsetT = 12;
+    pub const VT_BLOCK_HASH: flatbuffers::VOffsetT = 8;
+    pub const VT_CELLBASE: flatbuffers::VOffsetT = 10;
+    pub const VT_BITS: flatbuffers::VOffsetT = 12;
+    pub const VT_LEN: flatbuffers::VOffsetT = 14;
 
     #[inline]
     pub fn block_number(&self) -> u64 {
@@ -2284,6 +2301,11 @@ impl<'a> TransactionMeta<'a> {
         self._tab
             .get::<u64>(TransactionMeta::VT_EPOCH_NUMBER, Some(0))
             .unwrap()
+    }
+    #[inline]
+    pub fn block_hash(&self) -> Option<&'a Bytes32> {
+        self._tab
+            .get::<Bytes32>(TransactionMeta::VT_BLOCK_HASH, None)
     }
     #[inline]
     pub fn cellbase(&self) -> bool {
@@ -2307,6 +2329,7 @@ impl<'a> TransactionMeta<'a> {
 pub struct TransactionMetaArgs<'a> {
     pub block_number: u64,
     pub epoch_number: u64,
+    pub block_hash: Option<&'a Bytes32>,
     pub cellbase: bool,
     pub bits: Option<flatbuffers::WIPOffset<Bytes<'a>>>,
     pub len: u32,
@@ -2317,6 +2340,7 @@ impl<'a> Default for TransactionMetaArgs<'a> {
         TransactionMetaArgs {
             block_number: 0,
             epoch_number: 0,
+            block_hash: None,
             cellbase: false,
             bits: None,
             len: 0,
@@ -2337,6 +2361,11 @@ impl<'a: 'b, 'b> TransactionMetaBuilder<'a, 'b> {
     pub fn add_epoch_number(&mut self, epoch_number: u64) {
         self.fbb_
             .push_slot::<u64>(TransactionMeta::VT_EPOCH_NUMBER, epoch_number, 0);
+    }
+    #[inline]
+    pub fn add_block_hash(&mut self, block_hash: &'b Bytes32) {
+        self.fbb_
+            .push_slot_always::<&Bytes32>(TransactionMeta::VT_BLOCK_HASH, block_hash);
     }
     #[inline]
     pub fn add_cellbase(&mut self, cellbase: bool) {

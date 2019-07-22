@@ -6,6 +6,7 @@ use ckb_core::BlockNumber;
 use ckb_jsonrpc_types::BlockTemplate;
 use ckb_protocol::{RelayMessage, SyncMessage};
 use flatbuffers::FlatBufferBuilder;
+use numext_fixed_hash::H256;
 use std::collections::HashSet;
 use std::convert::Into;
 use std::thread::sleep;
@@ -47,8 +48,12 @@ pub fn build_block_transactions(block: &Block) -> Bytes {
 }
 
 pub fn build_header(header: &Header) -> Bytes {
+    build_headers(&[header.clone()])
+}
+
+pub fn build_headers(headers: &[Header]) -> Bytes {
     let fbb = &mut FlatBufferBuilder::new();
-    let message = SyncMessage::build_headers(fbb, &[header.clone()]);
+    let message = SyncMessage::build_headers(fbb, headers);
     fbb.finish(message, None);
     fbb.finished_data().into()
 }
@@ -56,6 +61,13 @@ pub fn build_header(header: &Header) -> Bytes {
 pub fn build_block(block: &Block) -> Bytes {
     let fbb = &mut FlatBufferBuilder::new();
     let message = SyncMessage::build_block(fbb, block);
+    fbb.finish(message, None);
+    fbb.finished_data().into()
+}
+
+pub fn build_get_blocks(hashes: &[H256]) -> Bytes {
+    let fbb = &mut FlatBufferBuilder::new();
+    let message = SyncMessage::build_get_blocks(fbb, hashes);
     fbb.finish(message, None);
     fbb.finished_data().into()
 }

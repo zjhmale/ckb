@@ -6,9 +6,9 @@ authors = ["Nervos Core Dev <dev@nervos.org>"]
 edition = "2018"
 
 [dependencies]
+clap = { version = "2" }
 toml = "0.5.0"
 ckb-jsonrpc-types = { path = "../util/jsonrpc-types" }
-ckb-logger = { path = "../util/logger" }
 ckb-app-config = { path = "../util/app-config" }
 ckb-core = { path = "../core" }
 ckb-network = { path = "../network" }
@@ -28,6 +28,7 @@ jsonrpc-client-core = "0.5.0"
 jsonrpc-client-http = "0.5.0"
 rand = "0.6"
 log = "0.4"
+env_logger = "0.6"
 bytes = "0.4.12"
 crossbeam-channel = "0.3"
 flatbuffers = "0.6.0"

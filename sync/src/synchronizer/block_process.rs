@@ -52,7 +52,8 @@ impl<'a> BlockProcess<'a> {
                 BAD_MESSAGE_BAN_TIME.as_secs()
             );
             self.synchronizer
-                .insert_block_status(block_hash, BlockStatus::FAILED_VALID);
+                .shared()
+                .insert_block_status(block_hash, BlockStatus::BLOCK_INVALID);
             self.nc.ban_peer(self.peer, BAD_MESSAGE_BAN_TIME);
         }
 

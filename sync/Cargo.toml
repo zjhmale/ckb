@@ -27,7 +27,6 @@ failure = "0.1.5"
 bytes = "0.4.12"
 lru-cache = { git = "https://github.com/nervosnetwork/lru-cache", rev = "a35fdb8" }
 sentry = "^0.15.4"
-hashbrown = "0.4.0"
 futures = "0.1"
 
 [dev-dependencies]
@@ -39,3 +38,4 @@ ckb-test-chain-utils = { path = "../util/test-chain-utils" }
 rand = "0.6"
 ckb-dao = { path = "../util/dao" }
 ckb-dao-utils = { path = "../util/dao/utils" }
+p2p = { version="0.2.1", package="tentacle" }

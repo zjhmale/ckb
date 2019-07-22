@@ -5,13 +5,13 @@ use ckb_core::{
     transaction::{Transaction, TX_VERSION},
     BlockNumber, Cycle, EpochNumber,
 };
-use ckb_logger::info_target;
 use ckb_resource::CODE_HASH_DAO;
 use ckb_script::{ScriptConfig, TransactionScriptsVerifier};
 use ckb_script_data_loader::DataLoader;
 use ckb_store::{data_loader_wrapper::DataLoaderWrapper, ChainStore};
 use ckb_traits::BlockMedianTimeContext;
 use lru_cache::LruCache;
+use numext_fixed_hash::H256;
 use std::cell::RefCell;
 use std::collections::HashSet;
 
@@ -28,11 +28,18 @@ where
         median_time_context: &'a M,
         block_number: BlockNumber,
         epoch_number: EpochNumber,
+        parent_hash: &'a H256,
         consensus: &'a Consensus,
     ) -> Self {
         ContextualTransactionVerifier {
             maturity: MaturityVerifier::new(&rtx, block_number, consensus.cellbase_maturity()),
-            since: SinceVerifier::new(rtx, median_time_context, block_number, epoch_number),
+            since: SinceVerifier::new(
+                rtx,
+                median_time_context,
+                block_number,
+                epoch_number,
+                parent_hash,
+            ),
         }
     }
 
@@ -59,11 +66,13 @@ where
     M: BlockMedianTimeContext,
     CS: ChainStore<'a>,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         rtx: &'a ResolvedTransaction,
         median_time_context: &'a M,
         block_number: BlockNumber,
         epoch_number: EpochNumber,
+        parent_hash: &'a H256,
         consensus: &'a Consensus,
         script_config: &'a ScriptConfig,
         chain_store: &'a CS,
@@ -76,7 +85,13 @@ where
             duplicate_deps: DuplicateDepsVerifier::new(&rtx.transaction),
             script: ScriptVerifier::new(rtx, chain_store, script_config),
             capacity: CapacityVerifier::new(rtx, chain_store),
-            since: SinceVerifier::new(rtx, median_time_context, block_number, epoch_number),
+            since: SinceVerifier::new(
+                rtx,
+                median_time_context,
+                block_number,
+                epoch_number,
+                parent_hash,
+            ),
         }
     }
 
@@ -363,7 +378,8 @@ pub struct SinceVerifier<'a, M> {
     block_median_time_context: &'a M,
     block_number: BlockNumber,
     epoch_number: EpochNumber,
-    median_timestamps_cache: RefCell<LruCache<BlockNumber, u64>>,
+    parent_hash: &'a H256,
+    median_timestamps_cache: RefCell<LruCache<H256, u64>>,
 }
 
 impl<'a, M> SinceVerifier<'a, M>
@@ -375,6 +391,7 @@ where
         block_median_time_context: &'a M,
         block_number: BlockNumber,
         epoch_number: BlockNumber,
+        parent_hash: &'a H256,
     ) -> Self {
         let median_timestamps_cache = RefCell::new(LruCache::new(rtx.resolved_inputs.len()));
         SinceVerifier {
@@ -382,35 +399,28 @@ where
             block_median_time_context,
             block_number,
             epoch_number,
+            parent_hash,
             median_timestamps_cache,
         }
     }
 
-    fn block_median_time(&self, n: BlockNumber) -> u64 {
-        let result = self.median_timestamps_cache.borrow().get(&n).cloned();
-        match result {
-            Some(median_time) => median_time,
-            None => {
-                let median_time = self
-                    .block_median_time_context
-                    .get_block_hash(n)
-                    .map(|block_hash| {
-                        self.block_median_time_context
-                            .block_median_time(n, &block_hash)
-                    })
-                    .unwrap_or(0);
-                info_target!(
-                    crate::LOG_TARGET,
-                    "median_time {}, number {}",
-                    median_time,
-                    n
-                );
-                self.median_timestamps_cache
-                    .borrow_mut()
-                    .insert(n, median_time);
-                median_time
-            }
+    fn parent_median_time(&self, block_hash: &H256) -> u64 {
+        let (_, _, parent_hash) = self
+            .block_median_time_context
+            .timestamp_and_parent(block_hash);
+        self.block_median_time(&parent_hash)
+    }
+
+    fn block_median_time(&self, block_hash: &H256) -> u64 {
+        if let Some(median_time) = self.median_timestamps_cache.borrow().get(block_hash) {
+            return *median_time;
         }
+
+        let median_time = self.block_median_time_context.block_median_time(block_hash);
+        self.median_timestamps_cache
+            .borrow_mut()
+            .insert(block_hash.clone(), median_time);
+        median_time
     }
 
     fn verify_absolute_lock(&self, since: Since) -> Result<(), TransactionError> {
@@ -427,7 +437,7 @@ where
                     }
                 }
                 Some(SinceMetric::Timestamp(timestamp)) => {
-                    let tip_timestamp = self.block_median_time(self.block_number.saturating_sub(1));
+                    let tip_timestamp = self.block_median_time(self.parent_hash);
                     if tip_timestamp < timestamp {
                         return Err(TransactionError::Immature);
                     }
@@ -446,19 +456,18 @@ where
         cell_meta: &CellMeta,
     ) -> Result<(), TransactionError> {
         if since.is_relative() {
-            // cell still in tx_pool
-            let (cell_block_number, cell_epoch_number) = match cell_meta.block_info {
-                Some(ref block_info) => (block_info.number, block_info.epoch),
+            let cell = match cell_meta.block_info {
+                Some(ref block_info) => block_info,
                 None => return Err(TransactionError::Immature),
             };
             match since.extract_metric() {
                 Some(SinceMetric::BlockNumber(block_number)) => {
-                    if self.block_number < cell_block_number + block_number {
+                    if self.block_number < cell.number + block_number {
                         return Err(TransactionError::Immature);
                     }
                 }
                 Some(SinceMetric::EpochNumber(epoch_number)) => {
-                    if self.epoch_number < cell_epoch_number + epoch_number {
+                    if self.epoch_number < cell.epoch + epoch_number {
                         return Err(TransactionError::Immature);
                     }
                 }
@@ -467,10 +476,8 @@ where
                     // parent of current block.
                     // pass_median_time(input_cell's block) starts with cell_block_number - 1,
                     // which is the parent of input_cell's block
-                    let cell_median_timestamp =
-                        self.block_median_time(cell_block_number.saturating_sub(1));
-                    let current_median_time =
-                        self.block_median_time(self.block_number.saturating_sub(1));
+                    let cell_median_timestamp = self.parent_median_time(&cell.hash);
+                    let current_median_time = self.block_median_time(self.parent_hash);
                     if current_median_time < cell_median_timestamp + timestamp {
                         return Err(TransactionError::Immature);
                     }

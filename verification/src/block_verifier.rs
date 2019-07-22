@@ -179,6 +179,14 @@ impl<'a> HeaderResolverWrapper<'a> {
             epoch,
         }
     }
+
+    pub fn build(header: &'a Header, parent: Option<Header>, epoch: Option<EpochExt>) -> Self {
+        HeaderResolverWrapper {
+            parent,
+            header,
+            epoch,
+        }
+    }
 }
 
 impl<'a> HeaderResolver for HeaderResolverWrapper<'a> {

@@ -26,7 +26,7 @@ pub use ckb_test_chain_utils::MockStore;
 const MIN_CAP: Capacity = capacity_bytes!(60);
 
 pub(crate) fn create_always_success_tx() -> Transaction {
-    let (ref always_success_cell, ref script) = create_always_success_cell();
+    let (ref always_success_cell, ref script) = always_success_cell();
     TransactionBuilder::default()
         .witness(script.clone().into_witness())
         .input(CellInput::new(OutPoint::null(), 0))
@@ -97,7 +97,7 @@ pub(crate) fn create_cellbase(
     consensus: &Consensus,
     parent: &Header,
 ) -> Transaction {
-    let (_, always_success_script) = create_always_success_cell();
+    let (_, always_success_script) = always_success_cell();
     let capacity = calculate_reward(store, consensus, parent);
     TransactionBuilder::default()
         .input(CellInput::new_cellbase_input(parent.number() + 1))
@@ -118,7 +118,7 @@ pub(crate) fn create_multi_outputs_transaction(
     output_len: usize,
     data: Vec<u8>,
 ) -> Transaction {
-    let (_, always_success_script) = create_always_success_cell();
+    let (_, always_success_script) = always_success_cell();
     let always_success_out_point = create_always_success_out_point();
 
     let parent_outputs = parent.outputs();
@@ -163,7 +163,7 @@ pub(crate) fn create_transaction_with_out_point(
     out_point: OutPoint,
     unique_data: u8,
 ) -> Transaction {
-    let (_, always_success_script) = create_always_success_cell();
+    let (_, always_success_script) = always_success_cell();
     let always_success_out_point = create_always_success_out_point();
 
     TransactionBuilder::default()

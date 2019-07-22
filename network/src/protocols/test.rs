@@ -91,9 +91,9 @@ fn net_service_start(name: String) -> Node {
         public_addresses: vec![],
         bootnodes: vec![],
         dns_seeds: vec![],
-        reserved_peers: vec![],
-        reserved_only: false,
-        max_peers: 10,
+        whitelist_peers: vec![],
+        whitelist_only: false,
+        max_peers: 19,
         max_outbound_peers: 5,
         path: tempdir()
             .expect("create tempdir failed")
@@ -104,6 +104,8 @@ fn net_service_start(name: String) -> Node {
         connect_outbound_interval_secs: 1,
         discovery_local_address: true,
         upnp: false,
+        bootnode_mode: true,
+        max_send_buffer: None,
     };
 
     let network_state =
@@ -249,7 +251,11 @@ where
 
 fn wait_connect_state(node: &Node, expect_num: usize) {
     if !wait_until(10, || node.session_num() == expect_num) {
-        panic!("node session number is not {}", expect_num)
+        panic!(
+            "node session number is {}, not {}",
+            node.session_num(),
+            expect_num
+        )
     }
 }
 
@@ -313,10 +319,6 @@ fn test_identify_behavior() {
 fn test_feeler_behavior() {
     let node1 = net_service_start("/test/1".to_string());
     let node2 = net_service_start("/test/1".to_string());
-
-    node1.dial(&node2, DialProtocol::Single(FEELER_PROTOCOL_ID.into()));
-
-    thread::sleep(Duration::from_secs(1));
 
     node1.dial(&node2, DialProtocol::Single(IDENTIFY_PROTOCOL_ID.into()));
 
@@ -408,4 +410,29 @@ fn test_ban() {
 
     wait_connect_state(&node1, 0);
     wait_connect_state(&node2, 0);
+}
+
+#[test]
+fn test_bootnode_mode_inbound_eviction() {
+    let node1 = net_service_start("/test/1".to_string());
+    let node2 = net_service_start("/test/1".to_string());
+    let node3 = net_service_start("/test/1".to_string());
+    let node4 = net_service_start("/test/1".to_string());
+    let node5 = net_service_start("/test/1".to_string());
+    let node6 = net_service_start("/test/1".to_string());
+
+    node2.dial(&node1, DialProtocol::Single(IDENTIFY_PROTOCOL_ID.into()));
+    node3.dial(&node1, DialProtocol::Single(IDENTIFY_PROTOCOL_ID.into()));
+    node4.dial(&node1, DialProtocol::Single(IDENTIFY_PROTOCOL_ID.into()));
+
+    // Normal connection
+    wait_connect_state(&node1, 3);
+    node5.dial(&node1, DialProtocol::Single(IDENTIFY_PROTOCOL_ID.into()));
+
+    wait_connect_state(&node1, 4);
+    // Arrival eviction condition 4 + 10, eviction 2
+    node6.dial(&node1, DialProtocol::Single(IDENTIFY_PROTOCOL_ID.into()));
+
+    // Normal connection, 2 + 1
+    wait_connect_state(&node1, 3);
 }
