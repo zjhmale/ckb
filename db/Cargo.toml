@@ -24,4 +24,3 @@ git = "https://github.com/zhangsoledad/rust-rocksdb"
 rev = "b0c4498"
 
 default-features = false
-features = ["snappy"]
