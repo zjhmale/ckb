@@ -160,6 +160,7 @@ impl Relayer {
         message: RelayMessage,
     ) {
         if let Err(err) = self.try_process(Arc::clone(&nc), peer, message) {
+            debug_target!(crate::LOG_TARGET_RELAY, "try_process error {}", err);
             if let Some(&Error::Misbehavior(ref e)) = err.downcast_ref() {
                 debug_target!(crate::LOG_TARGET_RELAY, "try_process error {}", e);
                 nc.ban_peer(peer, BAD_MESSAGE_BAN_TIME);
@@ -288,10 +289,10 @@ impl Relayer {
 
         if !short_ids_set.is_empty() {
             let tx_pool = self.shared.shared().try_read_tx_pool();
-            for entry in tx_pool.proposed_txs_iter() {
-                let short_id = short_transaction_id(key0, key1, &entry.transaction.witness_hash());
+            for tx in tx_pool.txs_iter() {
+                let short_id = short_transaction_id(key0, key1, &tx.witness_hash());
                 if short_ids_set.remove(&short_id) {
-                    txs_map.insert(short_id, entry.transaction.clone());
+                    txs_map.insert(short_id, tx.clone());
 
                     // Early exit here for performance
                     if short_ids_set.is_empty() {

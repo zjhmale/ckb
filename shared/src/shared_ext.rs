@@ -523,7 +523,7 @@ impl Shared {
         let tx_pool = self.tx_pool.read();
         let entries = tx_pool
             .proposed
-            .txs_iter()
+            .entries_iter()
             .take_while(|tx| {
                 cycles += tx.cycles;
                 size += tx.size;

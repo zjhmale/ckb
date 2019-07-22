@@ -51,6 +51,10 @@ impl PendingQueue {
         self.inner.keys()
     }
 
+    pub(crate) fn txs_iter(&self) -> impl Iterator<Item = &Transaction> {
+        self.inner.values().map(|entry| &entry.transaction)
+    }
+
     pub(crate) fn entries(&mut self) -> LinkedFnvHashMapEntries<ProposalShortId, PendingEntry> {
         self.inner.entries()
     }

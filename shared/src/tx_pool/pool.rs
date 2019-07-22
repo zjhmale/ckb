@@ -157,8 +157,15 @@ impl TxPool {
         self.last_txs_updated_at
     }
 
-    pub fn proposed_txs_iter(&self) -> impl Iterator<Item = &ProposedEntry> {
-        self.proposed.txs_iter()
+    pub fn proposed_entries_iter(&self) -> impl Iterator<Item = &ProposedEntry> {
+        self.proposed.entries_iter()
+    }
+
+    pub fn txs_iter(&self) -> impl Iterator<Item = &Transaction> {
+        self.proposed
+            .txs_iter()
+            .chain(self.pending.txs_iter())
+            .chain(self.orphan.txs_iter())
     }
 
     pub fn contains_proposal_id(&self, id: &ProposalShortId) -> bool {

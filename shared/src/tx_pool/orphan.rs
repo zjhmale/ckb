@@ -35,6 +35,10 @@ impl OrphanPool {
         self.vertices.contains_key(id)
     }
 
+    pub(crate) fn txs_iter(&self) -> impl Iterator<Item = &Transaction> {
+        self.vertices.values().map(|entry| &entry.transaction)
+    }
+
     /// add orphan transaction
     pub(crate) fn add_tx(
         &mut self,

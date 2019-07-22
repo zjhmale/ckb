@@ -283,7 +283,11 @@ impl ProposedPool {
             .collect()
     }
 
-    pub(crate) fn txs_iter(&self) -> impl Iterator<Item = &ProposedEntry> {
+    pub(crate) fn txs_iter(&self) -> impl Iterator<Item = &Transaction> {
+        self.vertices.values().map(|entry| &entry.transaction)
+    }
+
+    pub(crate) fn entries_iter(&self) -> impl Iterator<Item = &ProposedEntry> {
         self.vertices.values()
     }
 
