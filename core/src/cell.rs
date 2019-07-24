@@ -8,6 +8,7 @@ use ckb_util::LowerHexOption;
 use fnv::{FnvHashMap, FnvHashSet};
 use numext_fixed_hash::H256;
 use serde_derive::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::convert::AsRef;
 use std::fmt;
 
@@ -456,7 +457,7 @@ pub enum UnresolvableError {
 
 pub fn resolve_transaction<'a, 'b, 'c, CP: CellProvider<'b>, HP: HeaderProvider<'c>>(
     transaction: &'a Transaction,
-    seen_inputs: &mut FnvHashSet<OutPoint>,
+    seen_inputs: &mut HashSet<OutPoint>,
     cell_provider: &'b CP,
     header_provider: &'c HP,
 ) -> Result<ResolvedTransaction<'a>, UnresolvableError> {

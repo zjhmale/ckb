@@ -20,7 +20,7 @@ const SECP256K1_BLAKE160_SIGHASH_ALL_ARG_LEN: usize = 20;
 pub fn run(args: RunArgs, version: Version) -> Result<(), ExitCode> {
     deadlock_detection();
 
-    let shared = SharedBuilder::new()
+    let (shared, proposal_table) = SharedBuilder::new()
         .consensus(args.consensus)
         .db(&args.config.db)
         .tx_pool_config(args.config.tx_pool)
@@ -36,7 +36,7 @@ pub fn run(args: RunArgs, version: Version) -> Result<(), ExitCode> {
     verify_genesis(&shared)?;
 
     let notify = NotifyService::default().start(Some("notify"));
-    let chain_service = ChainService::new(shared.clone(), notify.clone());
+    let chain_service = ChainService::new(shared.clone(), proposal_table, notify.clone());
     let chain_controller = chain_service.start(Some("ChainService"));
     info_target!(
         crate::LOG_TARGET_MAIN,

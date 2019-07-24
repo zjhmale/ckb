@@ -1,14 +1,16 @@
 //! Top-level Pool type, methods, and tests
 use super::types::{DefectEntry, ProposedEntry, TxPoolConfig};
+use crate::atomic_snapshot::SharedSnapshot;
 use crate::tx_pool::orphan::OrphanPool;
 use crate::tx_pool::pending::PendingQueue;
 use crate::tx_pool::proposed::ProposedPool;
 use ckb_core::transaction::{OutPoint, ProposalShortId, Transaction};
 use ckb_core::{Capacity, Cycle};
 use ckb_logger::{error_target, trace_target};
-use ckb_store::StoreSnapshot;
+use ckb_script::ScriptConfig;
 use faketime::unix_time_as_millis;
 use lru_cache::LruCache;
+use std::sync::Arc;
 
 pub struct TxPool {
     pub(crate) config: TxPoolConfig,
@@ -29,11 +31,17 @@ pub struct TxPool {
     // sum of all tx_pool tx's cycles.
     pub(crate) total_tx_cycles: Cycle,
 
-    pub snapshot: StoreSnapshot,
+    pub snapshot: Arc<SharedSnapshot>,
+
+    pub script_config: ScriptConfig,
 }
 
 impl TxPool {
-    pub fn new(config: TxPoolConfig, snapshot: StoreSnapshot) -> TxPool {
+    pub fn new(
+        config: TxPoolConfig,
+        snapshot: Arc<SharedSnapshot>,
+        script_config: ScriptConfig,
+    ) -> TxPool {
         let cache_size = config.max_verfify_cache_size;
         let last_txs_updated_at = 0u64;
 
@@ -48,6 +56,7 @@ impl TxPool {
             total_tx_size: 0,
             total_tx_cycles: 0,
             snapshot,
+            script_config,
         }
     }
 
@@ -63,7 +72,7 @@ impl TxPool {
     pub fn orphan_size(&self) -> u32 {
         self.orphan.vertices.len() as u32
     }
-    pub fn snapshot(&self) -> &StoreSnapshot {
+    pub fn snapshot(&self) -> &SharedSnapshot {
         &self.snapshot
     }
 

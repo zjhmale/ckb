@@ -15,8 +15,9 @@ use ckb_core::transaction::{CellKey, CellOutPoint};
 use ckb_core::transaction_meta::TransactionMeta;
 use ckb_db::{Col, DBVector, Error, RocksDBTransaction, RocksDBTransactionSnapshot};
 use ckb_protos::{self as protos, CanBuild};
-use ckb_util::{FnvHashMap, FnvHashSet};
+use im::hashmap::HashMap as HamtMap;
 use numext_fixed_hash::H256;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 
 pub struct StoreTransaction {
@@ -129,14 +130,16 @@ impl StoreTransaction {
         for uncle in block.uncles() {
             self.insert_raw(COLUMN_UNCLES, &uncle.hash().as_bytes(), &[])?;
         }
-        self.insert_raw(COLUMN_INDEX, hash.as_bytes(), &number)?;
-        self.attach_block_cell(block)
+        self.insert_raw(COLUMN_INDEX, hash.as_bytes(), &number)
     }
 
-    fn attach_block_cell(&self, block: &Block) -> Result<(), Error> {
-        let mut new_inputs = FnvHashMap::default();
-        let mut new_tx_metas =
-            FnvHashMap::with_capacity_and_hasher(block.transactions().len(), Default::default());
+    pub fn attach_block_cell(
+        &self,
+        block: &Block,
+        cell_set: &mut HamtMap<H256, TransactionMeta>,
+    ) -> Result<(), Error> {
+        let mut new_inputs: HashMap<H256, Vec<u32>> = HashMap::default();
+        let mut new_tx_metas = HashMap::with_capacity(block.transactions().len());
 
         for tx in block.transactions() {
             let tx_hash = tx.hash();
@@ -180,17 +183,19 @@ impl StoreTransaction {
                     tx_meta.set_dead(i as usize);
                 }
             } else {
-                if let Some(mut tx_meta) = self.get_tx_meta(&tx_hash) {
+                if let Some(mut tx_meta) = cell_set.get(&tx_hash).cloned() {
                     for i in meta {
                         tx_meta.set_dead(i as usize);
                     }
                     self.update_cell_set(&tx_hash, &tx_meta)?;
+                    cell_set.insert(tx_hash.to_owned(), tx_meta);
                 }
             }
         }
 
-        for (tx_hash, meta) in &new_tx_metas {
-            self.update_cell_set(tx_hash, meta)?;
+        for (tx_hash, meta) in new_tx_metas {
+            self.update_cell_set(&tx_hash, &meta)?;
+            cell_set.insert(tx_hash.to_owned(), meta);
         }
         Ok(())
     }
@@ -209,14 +214,16 @@ impl StoreTransaction {
             self.delete(COLUMN_UNCLES, &uncle.hash().as_bytes())?;
         }
         self.delete(COLUMN_INDEX, &block.header().number().to_le_bytes())?;
-        self.delete(COLUMN_INDEX, block.header().hash().as_bytes())?;
-        self.detach_block_cell(block)
+        self.delete(COLUMN_INDEX, block.header().hash().as_bytes())
     }
 
-    fn detach_block_cell(&self, block: &Block) -> Result<(), Error> {
-        let mut old_outputs =
-            FnvHashSet::with_capacity_and_hasher(block.transactions().len(), Default::default());
-        let mut old_inputs = FnvHashMap::default();
+    pub fn detach_block_cell(
+        &self,
+        block: &Block,
+        cell_set: &mut HamtMap<H256, TransactionMeta>,
+    ) -> Result<(), Error> {
+        let mut old_outputs = HashSet::with_capacity(block.transactions().len());
+        let mut old_inputs: HashMap<H256, Vec<u32>> = HashMap::default();
         for tx in block.transactions() {
             let tx_hash = tx.hash();
             for input_pt in tx.input_pts_iter() {
@@ -232,17 +239,20 @@ impl StoreTransaction {
 
         for (tx_hash, meta) in old_inputs {
             if !old_outputs.contains(&tx_hash) {
-                if let Some(mut tx_meta) = self.get_tx_meta(&tx_hash) {
+                if let Some(mut tx_meta) = cell_set.get(&tx_hash).cloned() {
                     for i in meta {
                         tx_meta.unset_dead(i as usize);
                     }
                     self.update_cell_set(&tx_hash, &tx_meta)?;
+                    cell_set.insert(tx_hash.to_owned(), tx_meta);
                 }
             }
         }
 
         for tx_hash in old_outputs {
             self.delete_cell_set(&tx_hash)?;
+
+            cell_set.remove(&tx_hash);
         }
         Ok(())
     }

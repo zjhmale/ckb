@@ -67,7 +67,8 @@ impl<'a> BlockProposalProcess<'a> {
         if let Err(err) = self.nc.future_task(
             {
                 Box::new(lazy(move || -> FutureResult<(), ()> {
-                    let ret = shared.add_txs_to_pool(asked_txs);
+                    let mut tx_pool = shared.try_write_tx_pool();
+                    let ret = tx_pool.add_txs_to_pool(asked_txs);
                     if ret.is_err() {
                         warn_target!(
                             crate::LOG_TARGET_RELAY,

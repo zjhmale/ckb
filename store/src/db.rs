@@ -130,11 +130,7 @@ impl ChainDB {
         }
     }
 
-    // pub fn snapshot_manager(&self) -> RocksDBSnapshotManager {
-    //     self.db.snapshot_manager()
-    // }
-
-    pub fn init(&self, consensus: &Consensus) -> Result<(), Error> {
+    pub fn init(&self, consensus: &Consensus) -> Result<Tip, Error> {
         let genesis = consensus.genesis_block();
         let epoch = consensus.genesis_epoch_ext();
         let db_txn = self.begin_db_transaction();
@@ -188,6 +184,7 @@ impl ChainDB {
             .insert_block_epoch_index(&genesis_hash, epoch.last_block_hash_in_previous_epoch())?;
         db_txn.insert_epoch_ext(epoch.last_block_hash_in_previous_epoch(), &epoch)?;
         db_txn.attach_block(genesis)?;
-        db_txn.commit()
+        db_txn.commit()?;
+        Ok(tip)
     }
 }

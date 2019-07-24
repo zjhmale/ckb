@@ -72,7 +72,8 @@ impl<'a> TransactionProcess<'a> {
                 let tx_hash = tx_hash.clone();
                 let tx = tx.to_owned();
                 Box::new(lazy(move || -> FutureResult<(), ()> {
-                    let tx_result = shared.shared().add_tx_to_pool(tx.to_owned(), None);
+                    let mut tx_pool = shared.shared().try_write_tx_pool();
+                    let tx_result = tx_pool.add_tx_to_pool(tx.to_owned(), None);
                     // disconnect peer if cycles mismatch
                     match tx_result {
                         Ok(cycles) if cycles == relay_cycles => {

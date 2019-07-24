@@ -8,7 +8,6 @@
 //!   implement `ChainProvider`
 
 pub mod chain;
-mod proposal_table;
 
 #[cfg(test)]
 mod tests;

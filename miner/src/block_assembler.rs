@@ -20,6 +20,7 @@ use ckb_jsonrpc_types::{
 use ckb_logger::{error, info};
 use ckb_notify::NotifyController;
 use ckb_reward_calculator::RewardCalculator;
+use ckb_shared::SharedSnapshot;
 use ckb_shared::{shared::Shared, tx_pool::ProposedEntry};
 use ckb_stop_handler::{SignalSender, StopHandler};
 use ckb_store::ChainStore;
@@ -32,6 +33,7 @@ use fnv::FnvHashSet;
 use lru_cache::LruCache;
 use numext_fixed_hash::H256;
 use std::cmp;
+use std::collections::HashSet;
 use std::sync::{atomic::AtomicU64, atomic::AtomicUsize, atomic::Ordering, Arc};
 use std::thread;
 
@@ -269,7 +271,8 @@ impl BlockAssembler {
         let last_uncles_updated_at = self.last_uncles_updated_at.load(Ordering::SeqCst);
 
         let snapshot = self.shared.snapshot();
-        let last_txs_updated_at = self.shared.get_last_txs_updated_at();
+        let snapshot_ref: &SharedSnapshot = &snapshot;
+        let last_txs_updated_at = self.shared.try_read_tx_pool().last_txs_updated_at();
         let tip_header = snapshot
             .get_tip()
             .map(|tip| tip.header)
@@ -299,7 +302,7 @@ impl BlockAssembler {
             candidate_number,
             &current_epoch,
             candidate_uncles,
-            &snapshot,
+            snapshot_ref,
         );
 
         let cellbase_lock_args = self
@@ -317,13 +320,15 @@ impl BlockAssembler {
         );
 
         let (cellbase, cellbase_size) =
-            self.build_cellbase(&tip_header, cellbase_lock, &snapshot)?;
+            self.build_cellbase(&tip_header, cellbase_lock, snapshot_ref)?;
 
-        let proposals = self.shared.get_proposals(proposals_limit as usize);
+        let tx_pool = self.shared.try_read_tx_pool();
+
+        let proposals = tx_pool.get_proposals(proposals_limit as usize);
         let txs_size_limit =
             self.calculate_txs_size_limit(cellbase_size, bytes_limit, &uncles, &proposals)?;
 
-        let (entries, size, cycles) = self.shared.get_proposed_txs(txs_size_limit, cycles_limit);
+        let (entries, size, cycles) = tx_pool.get_proposed_txs(txs_size_limit, cycles_limit);
         if !entries.is_empty() {
             info!(
                 "[get_block_template] candidate txs count: {}, size: {}/{}, cycles:{}/{}",
@@ -340,15 +345,19 @@ impl BlockAssembler {
         for entry in &entries {
             txs.push(entry.transaction.to_owned());
         }
-        let mut seen_inputs = FnvHashSet::default();
+        let mut seen_inputs = HashSet::default();
         let transactions_provider = TransactionsProvider::new(&txs);
-        let overlay_cell_provider = OverlayCellProvider::new(&transactions_provider, &snapshot);
+        let overlay_cell_provider = OverlayCellProvider::new(&transactions_provider, snapshot_ref);
 
         let rtxs = txs
             .iter()
             .try_fold(vec![], |mut rtxs, tx| {
-                match resolve_transaction(&tx, &mut seen_inputs, &overlay_cell_provider, &snapshot)
-                {
+                match resolve_transaction(
+                    &tx,
+                    &mut seen_inputs,
+                    &overlay_cell_provider,
+                    snapshot_ref,
+                ) {
                     Ok(rtx) => {
                         rtxs.push(rtx);
                         Ok(rtxs)
@@ -357,8 +366,8 @@ impl BlockAssembler {
                 }
             })
             .map_err(|_| Error::InvalidInput)?;
-        let dao =
-            DaoCalculator::new(self.shared.consensus(), &snapshot).dao_field(&rtxs, &tip_header)?;
+        let dao = DaoCalculator::new(self.shared.consensus(), snapshot_ref)
+            .dao_field(&rtxs, &tip_header)?;
 
         // Should recalculate current time after create cellbase (create cellbase may spend a lot of time)
         let current_time = cmp::max(unix_time_as_millis(), tip_header.timestamp() + 1);

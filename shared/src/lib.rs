@@ -7,17 +7,19 @@
 //! - [Chain](chain::chain::Chain) represent a struct which
 //!   implement `ChainProvider`
 
+mod atomic_snapshot;
 pub mod cell_set;
-// pub mod chain_state;
 pub mod error;
+mod proposal_table;
 pub mod shared;
-mod shared_ext;
 pub mod tx_pool;
+mod tx_pool_ext;
 
 #[cfg(test)]
 mod tests;
 
-pub use crate::shared_ext::ProposalProvider;
+pub use crate::atomic_snapshot::{AtomicSnapshot, ProposalView, SharedSnapshot};
+pub use crate::proposal_table::ProposalTable;
 
 pub(crate) const LOG_TARGET_TX_POOL: &str = "ckb-tx-pool";
 pub(crate) const LOG_TARGET_CHAIN: &str = "ckb-chain";

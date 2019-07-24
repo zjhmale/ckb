@@ -10,7 +10,7 @@ use ckb_traits::ChainProvider;
 use std::sync::Arc;
 
 pub fn profile(args: ProfArgs) -> Result<(), ExitCode> {
-    let shared = SharedBuilder::default()
+    let (shared, proposal_table) = SharedBuilder::default()
         .consensus(args.consensus.clone())
         .db(&args.config.db)
         .tx_pool_config(args.config.tx_pool)
@@ -22,7 +22,7 @@ pub fn profile(args: ProfArgs) -> Result<(), ExitCode> {
         })?;
 
     let tmp_dir = tempfile::Builder::new().tempdir().unwrap();
-    let tmp_shared = SharedBuilder::default()
+    let (tmp_shared, _) = SharedBuilder::default()
         .consensus(args.consensus)
         .db(&DBConfig {
             path: tmp_dir.as_ref().to_path_buf(),
@@ -39,7 +39,7 @@ pub fn profile(args: ProfArgs) -> Result<(), ExitCode> {
     let tip = shared.store().get_tip().expect("tip");
     let to = std::cmp::min(tip.header().number(), args.to);
     let notify = NotifyService::default().start::<&str>(Some("notify"));
-    let chain = ChainService::new(tmp_shared, notify);
+    let chain = ChainService::new(tmp_shared, proposal_table, notify);
     let chain_controller = chain.start(Some("chain"));
     profile_block_process(
         shared.clone(),

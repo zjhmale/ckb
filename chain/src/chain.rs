@@ -1,18 +1,17 @@
-use crate::proposal_table::ProposalTable;
 use ckb_core::block::Block;
 use ckb_core::cell::{
-    resolve_transaction, BlockCellProvider, OverlayCellProvider, ResolvedTransaction,
+    resolve_transaction, BlockCellProvider, CellProvider, CellStatus, HeaderProvider, HeaderStatus,
+    OverlayCellProvider, ResolvedTransaction, UnresolvableError,
 };
 use ckb_core::extras::BlockExt;
 use ckb_core::service::{Request, DEFAULT_CHANNEL_SIZE, SIGNAL_CHANNEL_SIZE};
 use ckb_core::tip::Tip;
-use ckb_core::transaction::ProposalShortId;
+use ckb_core::transaction::{OutPoint, ProposalShortId};
+use ckb_core::transaction_meta::TransactionMeta;
 use ckb_core::{BlockNumber, Cycle};
 use ckb_logger::{self, debug, error, info, log_enabled, trace, warn};
 use ckb_notify::NotifyController;
-use ckb_shared::cell_set::CellSetDiff;
-use ckb_shared::error::SharedError;
-use ckb_shared::shared::Shared;
+use ckb_shared::{error::SharedError, shared::Shared, ProposalTable};
 use ckb_stop_handler::{SignalSender, StopHandler};
 use ckb_store::{ChainStore, StoreTransaction};
 use ckb_traits::ChainProvider;
@@ -20,12 +19,12 @@ use ckb_verification::{BlockVerifier, ContextualBlockVerifier, Verifier, VerifyC
 use crossbeam_channel::{self, select, Receiver, Sender};
 use failure::Error as FailureError;
 use faketime::unix_time_as_millis;
-use fnv::FnvHashSet;
+use im::hashmap::HashMap as HamtMap;
 use lru_cache::LruCache;
 use numext_fixed_hash::H256;
 use numext_fixed_uint::U256;
 use serde_derive::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::{cmp, thread};
 
@@ -65,7 +64,7 @@ pub struct Fork {
     // blocks detached from index after forks
     pub(crate) detached: VecDeque<Block>,
     // proposal_id detached to index after forks
-    pub(crate) detached_proposal_id: FnvHashSet<ProposalShortId>,
+    pub(crate) detached_proposal_id: HashSet<ProposalShortId>,
     // to be updated exts
     pub(crate) dirty_exts: VecDeque<BlockExt>,
 }
@@ -79,7 +78,7 @@ impl Fork {
         &self.detached
     }
 
-    pub fn detached_proposal_id(&self) -> &FnvHashSet<ProposalShortId> {
+    pub fn detached_proposal_id(&self) -> &HashSet<ProposalShortId> {
         &self.detached_proposal_id
     }
 
@@ -89,6 +88,40 @@ impl Fork {
 
     pub fn verified_len(&self) -> usize {
         self.attached.len() - self.dirty_exts.len()
+    }
+}
+
+struct CellSetWrapper<'a> {
+    pub cell_set: &'a HamtMap<H256, TransactionMeta>,
+    pub txn: &'a StoreTransaction,
+}
+
+impl<'a> CellSetWrapper<'a> {
+    pub fn new(cell_set: &'a HamtMap<H256, TransactionMeta>, txn: &'a StoreTransaction) -> Self {
+        CellSetWrapper { cell_set, txn }
+    }
+}
+
+impl<'a> CellProvider<'a> for CellSetWrapper<'a> {
+    fn cell(&self, out_point: &OutPoint) -> CellStatus {
+        if let Some(cell_out_point) = &out_point.cell {
+            match self.cell_set.get(&cell_out_point.tx_hash) {
+                Some(tx_meta) => match tx_meta.is_dead(cell_out_point.index as usize) {
+                    Some(false) => {
+                        let cell_meta = self
+                            .txn
+                            .get_cell_meta(&cell_out_point.tx_hash, cell_out_point.index)
+                            .expect("store should be consistent with cell_set");
+                        CellStatus::live_cell(cell_meta)
+                    }
+                    Some(true) => CellStatus::Dead,
+                    None => CellStatus::Unknown,
+                },
+                None => CellStatus::Unknown,
+            }
+        } else {
+            CellStatus::Unspecified
+        }
     }
 }
 
@@ -120,38 +153,16 @@ pub struct ChainService {
 }
 
 impl ChainService {
-    pub fn new(shared: Shared, notify: NotifyController) -> ChainService {
-        let proposal_table = Self::init_proposal_table(&shared);
+    pub fn new(
+        shared: Shared,
+        proposal_table: ProposalTable,
+        notify: NotifyController,
+    ) -> ChainService {
         ChainService {
             shared,
             proposal_table,
             notify,
         }
-    }
-
-    pub(crate) fn init_proposal_table(shared: &Shared) -> ProposalTable {
-        let proposal_window = shared.consensus().tx_proposal_window();
-        let store = shared.store();
-        let tip_number = store.get_tip().expect("store inited").header().number();
-        let mut proposal_ids = ProposalTable::new(proposal_window);
-        let proposal_start = tip_number.saturating_sub(proposal_window.farthest());
-        for bn in proposal_start..=tip_number {
-            if let Some(hash) = store.get_block_hash(bn) {
-                let mut ids_set = FnvHashSet::default();
-                if let Some(ids) = store.get_block_proposal_txs_ids(&hash) {
-                    ids_set.extend(ids)
-                }
-
-                if let Some(us) = store.get_block_uncles(&hash) {
-                    for u in us {
-                        ids_set.extend(u.proposals);
-                    }
-                }
-                proposal_ids.insert(bn, ids_set);
-            }
-        }
-        proposal_ids.finalize(tip_number);
-        proposal_ids
     }
 
     pub fn start<S: ToString>(mut self, thread_name: Option<S>) -> ChainController {
@@ -296,6 +307,10 @@ impl ChainService {
             || ((current_total_difficulty == cannon_total_difficulty)
                 && (block.header().hash() < tip.header().hash()));
 
+        let shared_snapshot = self.shared.snapshot();
+        let mut cell_set = shared_snapshot.cell_set().clone();
+        let origin_proposals = shared_snapshot.proposals();
+
         if new_best_block {
             debug!(
                 "new best block found: {} => {:#x}, difficulty diff = {:#x}",
@@ -305,9 +320,9 @@ impl ChainService {
             );
             self.find_fork(&mut fork, tip.header().number(), &block, ext);
 
-            self.rollback(&fork, &db_txn)?;
+            self.rollback(&fork, &db_txn, &mut cell_set)?;
             // MUST update index before reconcile_main_chain
-            self.reconcile_main_chain(&db_txn, &mut fork, need_verify)?;
+            self.reconcile_main_chain(&db_txn, &mut fork, need_verify, &mut cell_set)?;
             let tip = Tip {
                 header: block.header().clone(),
                 total_difficulty: cannon_total_difficulty.clone(),
@@ -334,16 +349,30 @@ impl ChainService {
             );
             // finalize proposal_id table change
             // then, update tx_pool
-            let detached_proposal_id = self.proposal_ids_finalize(tip_header.number());
-            fork.detached_proposal_id = detached_proposal_id;
             self.update_proposal_table(&fork);
-            self.shared.update_tx_pool_for_reorg(
+            let (detached_proposal_id, new_proposals) = self
+                .proposal_table
+                .finalize(origin_proposals, tip_header.number());
+            fork.detached_proposal_id = detached_proposal_id;
+
+            let mut tx_pool = self.shared.try_write_tx_pool();
+            let mut txs_verify_cache = self.shared.lock_txs_verify_cache();
+
+            let tip = Tip {
+                header: block.header().clone(),
+                total_difficulty: cannon_total_difficulty.clone(),
+            };
+            let new_shared_snapshot = self
+                .shared
+                .new_shared_snapshot(tip, cell_set, new_proposals);
+            self.shared
+                .switch_snapshot(new_shared_snapshot);
+            tx_pool.update_tx_pool_for_reorg(
                 fork.detached().iter(),
                 fork.attached().iter(),
                 fork.detached_proposal_id().iter(),
-                block.header(),
+                &mut txs_verify_cache,
                 self.shared.snapshot(),
-                &self.proposal_table,
             );
             for detached_block in fork.detached() {
                 self.notify
@@ -366,10 +395,6 @@ impl ChainService {
         Ok(true)
     }
 
-    pub fn proposal_ids_finalize(&mut self, number: BlockNumber) -> FnvHashSet<ProposalShortId> {
-        self.proposal_table.finalize(number)
-    }
-
     pub(crate) fn update_proposal_table(&mut self, fork: &Fork) {
         for blk in fork.detached() {
             self.proposal_table.remove(blk.header().number());
@@ -380,9 +405,15 @@ impl ChainService {
         }
     }
 
-    pub(crate) fn rollback(&self, fork: &Fork, txn: &StoreTransaction) -> Result<(), FailureError> {
+    pub(crate) fn rollback(
+        &self,
+        fork: &Fork,
+        txn: &StoreTransaction,
+        cell_set: &mut HamtMap<H256, TransactionMeta>,
+    ) -> Result<(), FailureError> {
         for block in fork.detached() {
             txn.detach_block(block)?;
+            txn.detach_block_cell(block, cell_set)?;
         }
         Ok(())
     }
@@ -512,12 +543,14 @@ impl ChainService {
         txn: &StoreTransaction,
         fork: &mut Fork,
         need_verify: bool,
+        cell_set: &mut HamtMap<H256, TransactionMeta>,
     ) -> Result<(), FailureError> {
         let mut txs_verify_cache = self.shared.lock_txs_verify_cache();
         let verified_len = fork.verified_len();
 
         for b in fork.attached().iter().take(verified_len) {
             txn.attach_block(b)?;
+            txn.attach_block_cell(b, cell_set)?;
         }
 
         let verify_context =
@@ -539,7 +572,7 @@ impl ChainService {
             if need_verify {
                 if found_error.is_none() {
                     let contextual_block_verifier = ContextualBlockVerifier::new(&verify_context);
-                    let mut seen_inputs = FnvHashSet::default();
+                    let mut seen_inputs = HashSet::default();
                     let block_cp = match BlockCellProvider::new(b) {
                         Ok(block_cp) => block_cp,
                         Err(err) => {
@@ -547,21 +580,23 @@ impl ChainService {
                             continue;
                         }
                     };
-                    let cell_provider = OverlayCellProvider::new(&block_cp, txn);
+                    let resolved = {
+                        let wrapper = CellSetWrapper::new(cell_set, txn);
+                        let cell_provider = OverlayCellProvider::new(&block_cp, &wrapper);
+                        b.transactions()
+                            .iter()
+                            .map(|x| {
+                                resolve_transaction(
+                                    x,
+                                    &mut seen_inputs,
+                                    &cell_provider,
+                                    &verify_context,
+                                )
+                            })
+                            .collect::<Result<Vec<ResolvedTransaction>, _>>()
+                    };
 
-                    match b
-                        .transactions()
-                        .iter()
-                        .map(|x| {
-                            resolve_transaction(
-                                x,
-                                &mut seen_inputs,
-                                &cell_provider,
-                                &verify_context,
-                            )
-                        })
-                        .collect::<Result<Vec<ResolvedTransaction>, _>>()
-                    {
+                    match resolved {
                         Ok(resolved) => {
                             match contextual_block_verifier.verify(
                                 &resolved,
@@ -572,6 +607,7 @@ impl ChainService {
                                     *verified = Some(true);
                                     l_txs_fees.extend(txs_fees);
                                     txn.attach_block(b)?;
+                                    txn.attach_block_cell(b, cell_set)?;
                                     let proof_size =
                                         self.shared.consensus().pow_engine().proof_size();
                                     if b.transactions().len() > 1 {
@@ -615,6 +651,7 @@ impl ChainService {
                 }
             } else {
                 txn.attach_block(b)?;
+                txn.attach_block_cell(b, cell_set)?;
                 *verified = Some(true);
             }
         }

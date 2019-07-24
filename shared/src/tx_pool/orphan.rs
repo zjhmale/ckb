@@ -8,7 +8,7 @@ use std::iter::ExactSizeIterator;
 
 ///not verified, may contain conflict transactions
 #[derive(Default, Debug, Clone)]
-pub(crate) struct OrphanPool {
+pub struct OrphanPool {
     pub(crate) vertices: FnvHashMap<ProposalShortId, DefectEntry>,
     pub(crate) edges: FnvHashMap<OutPoint, Vec<ProposalShortId>>,
 }

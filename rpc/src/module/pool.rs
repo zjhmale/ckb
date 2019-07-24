@@ -40,8 +40,8 @@ impl PoolRpcImpl {
 impl PoolRpc for PoolRpcImpl {
     fn send_transaction(&self, tx: Transaction) -> Result<H256> {
         let tx: CoreTransaction = tx.into();
-
-        let result = self.shared.add_tx_to_pool(tx.clone(), None);
+        let mut tx_pool = self.shared.try_write_tx_pool();
+        let result = tx_pool.add_tx_to_pool(tx.to_owned(), None);
         match result {
             Ok(cycles) => {
                 let fbb = &mut FlatBufferBuilder::new();

@@ -17,6 +17,7 @@ lru-cache = { git = "https://github.com/nervosnetwork/lru-cache", rev = "a35fdb8
 ckb-script-data-loader = { path = "../script/data-loader" }
 ckb-service = { path = "../util/service" }
 ckb-util = { path = "../util" }
+im = "13.0.0"
 
 [dev-dependencies]
 tempfile = "3.0"

@@ -40,10 +40,10 @@ impl<'a> GetTransactionProcess<'a> {
         );
         let entry_opt = {
             let short_id = ProposalShortId::from_tx_hash(&tx_hash);
-            self.relayer
-                .shared
-                .shared()
-                .get_tx_with_cycles_from_pool(&short_id)
+            let tx_pool = self.relayer.shared.shared().try_read_tx_pool();
+
+            tx_pool
+                .get_tx_with_cycles(&short_id)
                 .and_then(|(tx, cycles)| cycles.map(|cycles| (tx, cycles)))
         };
         if let Some((tx, cycles)) = entry_opt {

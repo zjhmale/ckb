@@ -84,7 +84,7 @@ impl<K: Hash + Eq, V: Copy + Eq + Hash> Edges<K, V> {
 }
 
 #[derive(Default, Debug, Clone)]
-pub(crate) struct ProposedPool {
+pub struct ProposedPool {
     pub(crate) vertices: LinkedFnvHashMap<ProposalShortId, ProposedEntry>,
     pub(crate) edges: Edges<OutPoint, ProposalShortId>,
 }

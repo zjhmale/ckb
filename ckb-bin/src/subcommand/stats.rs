@@ -18,7 +18,7 @@ struct Statics {
 
 impl Statics {
     pub fn build(args: StatsArgs) -> Result<Self, ExitCode> {
-        let shared = SharedBuilder::default()
+        let (shared, _proposal_table) = SharedBuilder::default()
             .consensus(args.consensus)
             .db(&args.config.db)
             .build()
