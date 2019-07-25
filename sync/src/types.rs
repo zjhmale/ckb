@@ -15,7 +15,7 @@ use ckb_core::Cycle;
 use ckb_logger::{debug, debug_target, error};
 use ckb_network::{CKBProtocolContext, PeerIndex};
 use ckb_protocol::SyncMessage;
-use ckb_shared::shared::Shared;
+use ckb_shared::{shared::Shared, SharedSnapshot};
 use ckb_store::ChainDB;
 use ckb_store::ChainStore;
 use ckb_traits::ChainProvider;
@@ -669,6 +669,11 @@ impl SyncSharedState {
     pub fn shared(&self) -> &Shared {
         &self.shared
     }
+
+    pub fn shared_snapshot(&self) -> Arc<SharedSnapshot> {
+        self.shared.snapshot()
+    }
+
     pub fn n_sync_started(&self) -> &AtomicUsize {
         &self.n_sync_started
     }
@@ -712,7 +717,7 @@ impl SyncSharedState {
     }
     pub fn tip_header(&self) -> Header {
         self.shared
-            .store()
+            .snapshot()
             .get_tip()
             .map(|tip| tip.header)
             .expect("get_tip_header")

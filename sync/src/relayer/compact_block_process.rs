@@ -71,11 +71,15 @@ impl<'a> CompactBlockProcess<'a> {
             return Err(Error::Misbehavior(Misbehavior::BlockInvalid).into());
         }
 
-        let parent = self
+        let parent_hash = compact_block.header.parent_hash();
+        let parent = self.relayer.shared.get_header_view(parent_hash);
+        let tip = self
             .relayer
             .shared
-            .get_header_view(compact_block.header.parent_hash());
-        let tip = self.relayer.shared.store().get_tip().expect("tip");
+            .shared()
+            .snapshot()
+            .get_tip()
+            .expect("tip");
         if parent.is_none() {
             debug_target!(
                 crate::LOG_TARGET_RELAY,
@@ -151,6 +155,12 @@ impl<'a> CompactBlockProcess<'a> {
                         pending_compact_blocks
                             .get(&block_hash)
                             .map(|(compact_block, _)| compact_block.header.to_owned())
+                            .or_else(|| {
+                                self.relayer
+                                    .shared
+                                    .get_header_view(&block_hash)
+                                    .map(|header_view| header_view.into_inner())
+                            })
                     }
                 };
                 let resolver = self

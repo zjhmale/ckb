@@ -226,7 +226,12 @@ impl<'a> HeadersProcess<'a> {
 
         if log_enabled!(Level::Debug) {
             // Regain the updated best known
-            let tip = self.synchronizer.shared.store().get_tip().expect("tip");
+            let tip = self
+                .synchronizer
+                .shared
+                .shared_snapshot()
+                .get_tip()
+                .expect("tip");
             let shared_best_known = self.synchronizer.shared.shared_best_header();
             let peer_best_known = self.synchronizer.peers().get_best_known_header(self.peer);
             debug!(

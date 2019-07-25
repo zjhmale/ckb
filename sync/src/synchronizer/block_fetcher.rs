@@ -20,7 +20,11 @@ pub struct BlockFetcher {
 impl BlockFetcher {
     pub fn new(synchronizer: Synchronizer, peer: PeerIndex) -> Self {
         let (tip_header, total_difficulty) = {
-            let tip = synchronizer.shared.store().get_tip().expect("tip");
+            let tip = synchronizer
+                .shared
+                .shared_snapshot()
+                .get_tip()
+                .expect("tip");
             (tip.header().to_owned(), tip.total_difficulty().to_owned())
         };
         BlockFetcher {

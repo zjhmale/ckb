@@ -28,8 +28,8 @@ impl StatsRpc for StatsRpcImpl {
     fn get_blockchain_info(&self) -> Result<ChainInfo> {
         let chain = self.synchronizer.shared.consensus().id.clone();
         let (tip_header, median_time) = {
-            let store = self.shared.store();
-            let tip_header = store.get_tip().expect("tip").header().clone();
+            let snapshot = self.shared.snapshot();
+            let tip_header = snapshot.get_tip().expect("tip").header().clone();
             let median_time = (&self.shared).block_median_time(tip_header.hash());
             (tip_header, median_time)
         };

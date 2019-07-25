@@ -365,8 +365,7 @@ impl ChainService {
             let new_shared_snapshot = self
                 .shared
                 .new_shared_snapshot(tip, cell_set, new_proposals);
-            self.shared
-                .switch_snapshot(new_shared_snapshot);
+            self.shared.switch_snapshot(new_shared_snapshot);
             tx_pool.update_tx_pool_for_reorg(
                 fork.detached().iter(),
                 fork.attached().iter(),
@@ -677,7 +676,7 @@ impl ChainService {
 
         let tip = self
             .shared
-            .store()
+            .snapshot()
             .get_tip()
             .expect("tip")
             .header()

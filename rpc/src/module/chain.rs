@@ -139,7 +139,7 @@ impl ChainRpc for ChainRpcImpl {
     fn get_tip_header(&self) -> Result<HeaderView> {
         Ok(self
             .shared
-            .store()
+            .snapshot()
             .get_tip()
             .map(|tip| tip.header)
             .as_ref()
