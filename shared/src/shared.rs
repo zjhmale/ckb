@@ -265,24 +265,7 @@ impl ChainProvider for Shared {
 
 impl<'a> CellProvider<'a> for Shared {
     fn cell(&'a self, out_point: &OutPoint) -> CellStatus {
-        if let Some(cell_out_point) = &out_point.cell {
-            match self.store.get_tx_meta(&cell_out_point.tx_hash) {
-                Some(tx_meta) => match tx_meta.is_dead(cell_out_point.index as usize) {
-                    Some(false) => {
-                        let cell_meta = self
-                            .store
-                            .get_cell_meta(&cell_out_point.tx_hash, cell_out_point.index)
-                            .expect("store should be consistent with cell_set");
-                        CellStatus::live_cell(cell_meta)
-                    }
-                    Some(true) => CellStatus::Dead,
-                    None => CellStatus::Unknown,
-                },
-                None => CellStatus::Unknown,
-            }
-        } else {
-            CellStatus::Unspecified
-        }
+        self.snapshot().cell(out_point)
     }
 }
 
