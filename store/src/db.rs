@@ -18,8 +18,6 @@ use std::sync::Mutex;
 
 pub struct ChainDB {
     db: RocksDB,
-    header_cache: Mutex<LruCache<H256, Header>>,
-    cell_output_cache: Mutex<LruCache<(H256, u32), CellOutput>>,
 }
 
 impl<'a> ChainStore<'a> for ChainDB {
@@ -29,64 +27,6 @@ impl<'a> ChainStore<'a> for ChainDB {
         self.db
             .get_pinned(col, key)
             .expect("db operation should be ok")
-    }
-
-    fn get_block_header(&self, hash: &H256) -> Option<Header> {
-        let mut header_cache_unlocked = self
-            .header_cache
-            .lock()
-            .expect("poisoned header cache lock");
-        if let Some(header) = header_cache_unlocked.get_refresh(hash) {
-            return Some(header.clone());
-        }
-        // release lock asap
-        drop(header_cache_unlocked);
-
-        self.get(COLUMN_BLOCK_HEADER, hash.as_bytes())
-            .map(|slice| {
-                protos::StoredHeader::from_slice(&slice.as_ref())
-                    .try_into()
-                    .expect("deserialize")
-            })
-            .and_then(|header: Header| {
-                let mut header_cache_unlocked = self
-                    .header_cache
-                    .lock()
-                    .expect("poisoned header cache lock");
-                header_cache_unlocked.insert(hash.clone(), header.clone());
-                Some(header)
-            })
-    }
-
-    fn get_cell_output(&self, tx_hash: &H256, index: u32) -> Option<CellOutput> {
-        let mut cell_output_cache_unlocked = self
-            .cell_output_cache
-            .lock()
-            .expect("poisoned cell output cache lock");
-        if let Some(cell_output) = cell_output_cache_unlocked.get_refresh(&(tx_hash.clone(), index))
-        {
-            return Some(cell_output.clone());
-        }
-        // release lock asap
-        drop(cell_output_cache_unlocked);
-
-        self.get_transaction_info(&tx_hash)
-            .and_then(|info| {
-                self.get(COLUMN_BLOCK_BODY, info.block_hash.as_bytes())
-                    .and_then(|slice| {
-                        protos::StoredBlockBody::from_slice(&slice.as_ref())
-                            .output(info.index, index as usize)
-                            .expect("deserialize")
-                    })
-            })
-            .map(|cell_output: CellOutput| {
-                let mut cell_output_cache_unlocked = self
-                    .cell_output_cache
-                    .lock()
-                    .expect("poisoned cell output cache lock");
-                cell_output_cache_unlocked.insert((tx_hash.clone(), index), cell_output.clone());
-                cell_output
-            })
     }
 }
 
@@ -98,8 +38,6 @@ impl ChainDB {
     pub fn with_config(db: RocksDB, config: StoreConfig) -> Self {
         ChainDB {
             db,
-            header_cache: Mutex::new(LruCache::new(config.header_cache_size)),
-            cell_output_cache: Mutex::new(LruCache::new(config.cell_output_cache_size)),
         }
     }
 
