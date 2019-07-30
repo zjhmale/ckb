@@ -219,6 +219,21 @@ fn build_specs() -> SpecMap {
         "different_txs_with_same_input",
         Box::new(DifferentTxsWithSameInput),
     );
+    specs.insert("deposit_dao", Box::new(DepositDAO));
+    specs.insert("deposit_dao_twice", Box::new(DepositDAOTwice));
+    specs.insert("withdraw_dao", Box::new(WithdrawDAO));
+    specs.insert(
+        "withdraw_dao_with_invalid_witness",
+        Box::new(WithdrawDAOWithInvalidWitness),
+    );
+    specs.insert(
+        "withdraw_dao_with_overflow_capacity",
+        Box::new(WithdrawDAOWithOverflowCapacity),
+    );
+    specs.insert(
+        "withdraw_dao_with_since_maturity",
+        Box::new(WithdrawDAOWithSinceMaturity),
+    );
     specs.insert("compact_block_empty", Box::new(CompactBlockEmpty));
     specs.insert(
         "compact_block_empty_parent_unknown",
