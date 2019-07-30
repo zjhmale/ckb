@@ -1,3 +1,4 @@
+use crate::{CELL_OUTPUT_CACHE, HEADER_CACHE};
 use crate::{
     COLUMN_BLOCK_BODY, COLUMN_BLOCK_EPOCH, COLUMN_BLOCK_EXT, COLUMN_BLOCK_HEADER,
     COLUMN_BLOCK_PROPOSAL_IDS, COLUMN_BLOCK_UNCLE, COLUMN_CELL_META, COLUMN_CELL_SET, COLUMN_EPOCH,
@@ -48,11 +49,21 @@ pub trait ChainStore<'a> {
 
     /// Get header by block header hash
     fn get_block_header(&'a self, hash: &H256) -> Option<Header> {
-        self.get(COLUMN_BLOCK_HEADER, hash.as_bytes()).map(|slice| {
-            protos::StoredHeader::from_slice(&slice.as_ref())
-                .try_into()
-                .expect("deserialize")
-        })
+        {
+            if let Some(header) = HEADER_CACHE.lock().get_refresh(hash) {
+                return Some(header.clone());
+            }
+        }
+        self.get(COLUMN_BLOCK_HEADER, hash.as_bytes())
+            .map(|slice| {
+                protos::StoredHeader::from_slice(&slice.as_ref())
+                    .try_into()
+                    .expect("deserialize")
+            })
+            .map(|header: Header| {
+                HEADER_CACHE.lock().insert(hash.clone(), header.clone());
+                header
+            })
     }
 
     /// Get block body by block header hash
@@ -202,14 +213,29 @@ pub trait ChainStore<'a> {
     }
 
     fn get_cell_output(&'a self, tx_hash: &H256, index: u32) -> Option<CellOutput> {
-        self.get_transaction_info(&tx_hash).and_then(|info| {
-            self.get(COLUMN_BLOCK_BODY, info.block_hash.as_bytes())
-                .and_then(|slice| {
-                    protos::StoredBlockBody::from_slice(&slice.as_ref())
-                        .output(info.index, index as usize)
-                        .expect("deserialize")
-                })
-        })
+        {
+            if let Some(cell_output) = CELL_OUTPUT_CACHE
+                .lock()
+                .get_refresh(&(tx_hash.clone(), index))
+            {
+                return Some(cell_output.clone());
+            }
+        }
+        self.get_transaction_info(&tx_hash)
+            .and_then(|info| {
+                self.get(COLUMN_BLOCK_BODY, info.block_hash.as_bytes())
+                    .and_then(|slice| {
+                        protos::StoredBlockBody::from_slice(&slice.as_ref())
+                            .output(info.index, index as usize)
+                            .expect("deserialize")
+                    })
+            })
+            .map(|cell_output: CellOutput| {
+                CELL_OUTPUT_CACHE
+                    .lock()
+                    .insert((tx_hash.clone(), index), cell_output.clone());
+                cell_output
+            })
     }
 
     // Get current epoch ext

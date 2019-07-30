@@ -11,7 +11,12 @@ pub use snapshot::StoreSnapshot;
 pub use store::ChainStore;
 pub use transaction::StoreTransaction;
 
+use ckb_core::{header::Header, transaction::CellOutput};
 use ckb_db::Col;
+use ckb_util::Mutex;
+use lazy_static::lazy_static;
+use lru_cache::LruCache;
+use numext_fixed_hash::H256;
 
 pub const COLUMNS: u32 = 13;
 pub const COLUMN_INDEX: Col = "0";
@@ -31,3 +36,12 @@ pub const COLUMN_UNCLES: Col = "12";
 
 const META_TIP_HEADER_KEY: &[u8] = b"TIP_HEADER";
 const META_CURRENT_EPOCH_KEY: &[u8] = b"CURRENT_EPOCH";
+
+lazy_static! {
+    static ref HEADER_CACHE: Mutex<LruCache<H256, Header>> = { Mutex::new(LruCache::new(4096)) };
+}
+
+lazy_static! {
+    static ref CELL_OUTPUT_CACHE: Mutex<LruCache<(H256, u32), CellOutput>> =
+        { Mutex::new(LruCache::new(128)) };
+}
